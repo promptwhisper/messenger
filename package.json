@@ -1,0 +1,56 @@
+{
+  "name": "messenger",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A browser-based 3D delivery experience rebuilt with React and Three.js",
+  "author": "promptwhisper",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/promptwhisper/messenger.git"
+  },
+  "homepage": "https://promptwhisper.github.io/messenger/",
+  "bugs": {
+    "url": "https://github.com/promptwhisper/messenger/issues"
+  },
+  "keywords": [
+    "messenger",
+    "threejs",
+    "webgl",
+    "nextjs",
+    "react"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "packageManager": "pnpm@11.7.0",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "lint": "eslint",
+    "typecheck": "tsc --noEmit",
+    "check": "pnpm lint && pnpm typecheck && pnpm build"
+  },
+  "dependencies": {
+    "@react-three/drei": "^10.7.7",
+    "@react-three/fiber": "^9.6.1",
+    "@react-three/postprocessing": "^3.0.4",
+    "next": "16.2.1",
+    "postprocessing": "^6.39.1",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "three": "^0.184.0",
+    "three-stdlib": "^2.36.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^24",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@types/three": "^0.184.0",
+    "eslint": "^9",
+    "eslint-config-next": "16.2.1",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}
