@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="380" viewBox="0 0 1200 380" role="img" aria-labelledby="title desc">
+  <title id="title">Messenger</title>
+  <desc id="desc">A small courier follows an orbital route through a set of interactive 3D planets and characters.</desc>
+  <defs>
+    <radialGradient id="space" cx=".75" cy=".25" r=".9">
+      <stop offset="0" stop-color="#243e79"/>
+      <stop offset=".55" stop-color="#111d43"/>
+      <stop offset="1" stop-color="#080d22"/>
+    </radialGradient>
+    <linearGradient id="route" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f5d56b"/>
+      <stop offset="1" stop-color="#f28a70"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="380" rx="28" fill="url(#space)"/>
+  <g fill="#eef4ff" opacity=".75">
+    <circle cx="723" cy="62" r="2"/><circle cx="1140" cy="74" r="3"/><circle cx="970" cy="33" r="2"/>
+    <circle cx="658" cy="186" r="2"/><circle cx="1083" cy="228" r="2"/><circle cx="843" cy="320" r="3"/>
+    <circle cx="522" cy="53" r="2"/><circle cx="580" cy="302" r="2"/>
+  </g>
+  <g font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
+    <text x="64" y="80" fill="#f5d56b" font-size="18" font-weight="750" letter-spacing="3">AN INTERACTIVE 3D DELIVERY JOURNEY</text>
+    <text x="62" y="162" fill="#ffffff" font-size="72" font-weight="780">Messenger</text>
+    <text x="66" y="209" fill="#b7c5e7" font-size="23">Walk, jump, meet strangers, and cross tiny worlds.</text>
+    <g transform="translate(66 260)" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="18" fill="#e7eeff">
+      <text x="0" y="0">EXPLORE</text><path d="M92 -6h52" stroke="#526892" stroke-width="2"/>
+      <text x="158" y="0">DELIVER</text><path d="M252 -6h52" stroke="#526892" stroke-width="2"/>
+      <text x="318" y="0">CONNECT</text>
+    </g>
+  </g>
+  <g transform="translate(670 14)">
+    <ellipse cx="264" cy="184" rx="250" ry="129" fill="none" stroke="#48639a" stroke-width="2" transform="rotate(-14 264 184)"/>
+    <path d="M48 245C136 345 280 269 339 172S458 57 508 89" fill="none" stroke="url(#route)" stroke-width="7" stroke-linecap="round" stroke-dasharray="18 13"/>
+    <g transform="translate(26 200)">
+      <circle cx="58" cy="58" r="58" fill="#7db08f"/>
+      <path d="M19 62c28-21 48-8 65-30 17 31 25 49 15 72-28 17-60 14-80-10z" fill="#b7d9a7"/>
+      <path d="M9 72c31-8 76 14 98 34" fill="none" stroke="#527767" stroke-width="5"/>
+    </g>
+    <g transform="translate(423 38)">
+      <circle cx="58" cy="58" r="58" fill="#c7816d"/>
+      <path d="M12 64c25-24 47-13 63-31 9 24 30 42 26 66-29 17-64 17-89-2z" fill="#f2ba82"/>
+      <circle cx="79" cy="42" r="9" fill="#805467"/>
+    </g>
+    <g transform="translate(245 145)">
+      <circle cx="45" cy="45" r="45" fill="#8d85ce"/>
+      <path d="M12 55c26-10 43-30 64-26 8 27-1 46-22 58-19 5-35-2-42-18z" fill="#bdb3ed"/>
+    </g>
+    <g transform="translate(298 196)" stroke="#f5d56b" stroke-width="5" stroke-linecap="round">
+      <circle cx="0" cy="0" r="13" fill="#f5d56b" stroke="none"/>
+      <path d="M0 13v42M0 26l-23 20M0 27l22 13M0 55l-18 31M0 55l22 29"/>
+      <path d="M15 20l23 9-18 17z" fill="#f28a70"/>
+    </g>
+  </g>
+</svg>
