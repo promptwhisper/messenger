@@ -7,40 +7,41 @@ import {
   Group,
   Color,
   Vector3,
+  Vector2,
   Mesh,
-  MeshToonMaterial,
+  Points,
   MeshBasicMaterial,
-  PointsMaterial,
   ShaderMaterial,
-  AdditiveBlending,
   CustomBlending,
   SrcAlphaFactor,
   OneFactor,
   ZeroFactor,
   DoubleSide,
+  BackSide,
+  SphereGeometry,
   RepeatWrapping,
   SRGBColorSpace,
   ClampToEdgeWrapping,
   NearestFilter,
-  DataTexture,
-  RedFormat,
   BufferGeometry,
   BufferAttribute,
   type Texture,
-  type PerspectiveCamera,
 } from "three";
 import { useDrcGeometry, useKtx2Texture } from "@/lib/messenger/r3f/hooks";
 import { publicPath } from "@/lib/messenger/assets";
+import { createMessengerMaterial } from "@/lib/messenger/r3f/materials";
+import PresentDecorations from "./PresentDecorations";
+import CurveDecorations from "./CurveDecorations";
 
-// Shared 3-step toon ramp (same flat hand-drawn shading the characters use).
-const TOON_RAMP = (() => {
-  const ramp = new Uint8Array([150, 205, 255]);
-  const tex = new DataTexture(ramp, ramp.length, 1, RedFormat);
-  tex.minFilter = NearestFilter;
-  tex.magFilter = NearestFilter;
-  tex.needsUpdate = true;
-  return tex;
-})();
+const clamp01 = (value: number) => Math.min(1, Math.max(0, value));
+const quadInOut = (value: number) =>
+  value < 0.5 ? 2 * value * value : 1 - Math.pow(-2 * value + 2, 2) / 2;
+const quartInOut = (value: number) =>
+  value < 0.5 ? 8 * Math.pow(value, 4) : 1 - Math.pow(-2 * value + 2, 4) / 2;
+const elasticOut = (value: number, period: number) => {
+  if (value === 0 || value === 1) return value;
+  return Math.pow(2, -10 * value) * Math.sin(((value - period / 4) * Math.PI * 2) / period) + 1;
+};
 
 /** Configure the shared colour atlas exactly like the original (nearest, sRGB). */
 function configureAtlas(tex: Texture): Texture {
@@ -64,19 +65,24 @@ function configureAtlas(tex: Texture): Texture {
 function AtlasMesh({
   path,
   atlas,
+  terrainNoise,
+  terrainDetail,
   cast = true,
   receive = true,
 }: {
   path: string;
   atlas: Texture;
+  terrainNoise?: Texture;
+  terrainDetail?: Texture;
   cast?: boolean;
   receive?: boolean;
 }) {
   const geometry = useDrcGeometry(path);
   const material = useMemo(
-    () => new MeshToonMaterial({ map: atlas, gradientMap: TOON_RAMP }),
-    [atlas]
+    () => createMessengerMaterial(atlas, { fog: false, terrainNoise, terrainDetail }),
+    [atlas, terrainDetail, terrainNoise]
   );
+  useEffect(() => () => material.dispose(), [material]);
   return (
     <mesh geometry={geometry} material={material} castShadow={cast} receiveShadow={receive} />
   );
@@ -86,38 +92,159 @@ function AtlasMesh({
 function CloudMesh({ path }: { path: string }) {
   const geometry = useDrcGeometry(path);
   const material = useMemo(
-    () => new MeshToonMaterial({ color: new Color("#f8f8f8"), gradientMap: TOON_RAMP }),
+    () => new MeshBasicMaterial({ color: new Color("#f8f8f8") }),
     []
   );
+  useEffect(() => () => material.dispose(), [material]);
   return <mesh geometry={geometry} material={material} />;
 }
 
-/** Point-cloud from a `.drc` (the faint starfield). */
-function DrcPoints({
-  path,
-  size = 0.025,
-  color = "#ffffff",
-  additive = false,
-}: {
-  path: string;
-  size?: number;
-  color?: string;
-  additive?: boolean;
-}) {
+/** Original 16-frame doodle particle sheet driven by the authored point data. */
+function IntroParticles({ path }: { path: string }) {
   const geometry = useDrcGeometry(path);
+  const sprites = useKtx2Texture("particle_sprites.ktx2");
+  const pointsRef = useRef<Points>(null);
   const material = useMemo(() => {
-    const mat = new PointsMaterial({
-      size,
-      sizeAttenuation: true,
-      color: new Color(color),
-      vertexColors: Boolean(geometry.getAttribute("color")),
+    sprites.wrapS = sprites.wrapT = RepeatWrapping;
+    sprites.colorSpace = SRGBColorSpace;
+    sprites.needsUpdate = true;
+    return new ShaderMaterial({
       transparent: true,
       depthWrite: false,
+      blending: CustomBlending,
+      blendSrc: SrcAlphaFactor,
+      blendSrcAlpha: ZeroFactor,
+      blendDst: OneFactor,
+      blendDstAlpha: OneFactor,
+      uniforms: {
+        uSprites: { value: sprites },
+        uColor: { value: new Color("#6a8f89") },
+        uShow: { value: 0 },
+        uTime: { value: 0 },
+        uResolution: { value: new Vector2(1, 1) },
+      },
+      vertexShader: /* glsl */ `
+        attribute vec3 color;
+        uniform float uShow;
+        uniform float uTime;
+        uniform vec2 uResolution;
+        varying vec3 vParticleNoise;
+        varying float vParticleProgress;
+        varying float vParticleRotation;
+        varying float vParticleSize;
+        void main() {
+          vParticleNoise = color;
+          float steppedTime = floor(uTime * 2.0) / 2.0;
+          vec3 pos = position;
+          vParticleRotation = sin(steppedTime + vParticleNoise.r * 20.0) * 3.14159265 * vParticleNoise.g;
+          pos.y += vParticleRotation * 0.1;
+          vParticleProgress = floor(fract(vParticleNoise.g * 20.0) * 16.0) / 16.0;
+          vParticleSize = vParticleNoise.b;
+          if (vParticleSize > 0.5) vParticleSize *= 2.0;
+          vec4 viewPosition = modelViewMatrix * vec4(pos, 1.0);
+          gl_Position = projectionMatrix * viewPosition;
+          gl_PointSize = (uResolution.y / mix(70.0, 50.0, vParticleSize)) * uShow;
+        }
+      `,
+      fragmentShader: /* glsl */ `
+        uniform sampler2D uSprites;
+        uniform vec3 uColor;
+        uniform float uShow;
+        varying vec3 vParticleNoise;
+        varying float vParticleProgress;
+        varying float vParticleRotation;
+        varying float vParticleSize;
+        mat2 rotate2d(float angle) {
+          float s = sin(angle);
+          float c = cos(angle);
+          return mat2(c, s, -s, c);
+        }
+        void main() {
+          vec2 uv = gl_PointCoord - 0.5;
+          uv = rotate2d(vParticleRotation) * uv + 0.5;
+          uv.y = 1.0 - uv.y;
+          uv.x = uv.x / 16.0 + 1.0 / 16.0 + vParticleProgress;
+          float sprite = texture2D(uSprites, uv).r;
+          if (sprite < 0.5) discard;
+          vec3 colorValue = mix(uColor * 1.5, uColor * uColor, vParticleNoise.r);
+          gl_FragColor = vec4(colorValue, sprite * smoothstep(0.0, 0.1, uShow));
+          #include <colorspace_fragment>
+        }
+      `,
     });
-    if (additive) mat.blending = AdditiveBlending;
-    return mat;
-  }, [geometry, size, color, additive]);
-  return <points geometry={geometry} material={material} />;
+  }, [sprites]);
+  const revealStart = useRef<number | null>(null);
+  useFrame((state) => {
+    if (revealStart.current === null) revealStart.current = state.clock.elapsedTime;
+    const elapsed = state.clock.elapsedTime - revealStart.current;
+    const reveal = clamp01((elapsed - 0.5) / 2);
+    material.uniforms.uShow.value = 0.5 - Math.cos(reveal * Math.PI) * 0.5;
+    material.uniforms.uTime.value = state.clock.elapsedTime;
+    material.uniforms.uResolution.value.set(
+      state.size.width * state.viewport.dpr,
+      state.size.height * state.viewport.dpr
+    );
+    const mesh = pointsRef.current;
+    if (mesh) {
+      const turn = quartInOut(clamp01((elapsed - 1) / 4));
+      mesh.rotation.y = -Math.PI * 0.75 * (1 - turn);
+    }
+  });
+  useEffect(() => () => material.dispose(), [material]);
+  return <points ref={pointsRef} geometry={geometry} material={material} frustumCulled={false} />;
+}
+
+function IntroBirds({ atlas }: { atlas: Texture }) {
+  const curve = useDrcGeometry("birds/curve-1.drc");
+  const bird = useDrcGeometry("birds/1.drc");
+  const path = curve.getAttribute("position_1");
+  const refs = useRef<Array<Mesh | null>>([]);
+  const start = useRef<number | null>(null);
+  const current = useMemo(() => new Vector3(), []);
+  const next = useMemo(() => new Vector3(), []);
+  const material = useMemo(
+    () => createMessengerMaterial(atlas, { fog: false }),
+    [atlas]
+  );
+  useFrame((state) => {
+    if (start.current === null) start.current = state.clock.elapsedTime;
+    const elapsed = state.clock.elapsedTime - start.current;
+    const reveal = clamp01((elapsed - 2.7) / 2);
+    for (let index = 0; index < refs.current.length; index += 1) {
+      const mesh = refs.current[index];
+      if (!mesh || !path) continue;
+      const group = index % 5;
+      const phase = (elapsed * 3 + (path.count / 5) * group + Math.floor(index / 5) * 1.6) % path.count;
+      const a = Math.floor(phase);
+      const b = (a + 1) % path.count;
+      current.fromBufferAttribute(path, a);
+      next.fromBufferAttribute(path, b);
+      mesh.position.lerpVectors(current, next, phase - a);
+      mesh.up.copy(current).normalize();
+      mesh.lookAt(next);
+      mesh.rotateY(Math.PI * 0.5);
+      const randomScale = 0.7 + (Math.sin(index * 43.17) * 0.5 + 0.5) * 0.5;
+      const flap = 1 + Math.sin(elapsed * (10 + (index % 4) * 1.7) + index) * 0.08;
+      mesh.scale.set(reveal * randomScale, reveal * randomScale * flap, reveal * randomScale);
+    }
+  });
+  useEffect(() => () => material.dispose(), [material]);
+  return (
+    <group name="intro-birds">
+      {Array.from({ length: 15 }, (_, index) => (
+        <mesh
+          key={index}
+          ref={(mesh) => {
+            refs.current[index] = mesh;
+          }}
+          geometry={bird}
+          material={material}
+          scale={0}
+          frustumCulled={false}
+        />
+      ))}
+    </group>
+  );
 }
 
 /**
@@ -202,10 +329,12 @@ function LetterMesh({
   geometry,
   material,
   position,
+  index,
 }: {
   geometry: BufferGeometry;
-  material: MeshBasicMaterial;
+  material: ShaderMaterial;
   position: [number, number, number];
+  index: number;
 }) {
   const ref = useRef<Mesh>(null);
   const st = useRef({
@@ -221,8 +350,16 @@ function LetterMesh({
     accY: 0,
     hovering: false,
   });
+  const revealStart = useRef<number | null>(null);
+  const initialRotation = useMemo(
+    () => [Math.sin(index * 91.73) * Math.PI, Math.sin(index * 47.11 + 2.4) * Math.PI],
+    [index]
+  );
 
-  useFrame((_, dtRaw) => {
+  useFrame((state, dtRaw) => {
+    if (revealStart.current === null) revealStart.current = state.clock.elapsedTime;
+    const elapsed = state.clock.elapsedTime - revealStart.current;
+    const reveal = elasticOut(clamp01((elapsed - 2.35 - index * 0.075) / 3), 0.75);
     const s = st.current;
     const dt = Math.min(dtRaw, 1 / 30);
     // Underdamped springs give the elastic overshoot the original uses.
@@ -236,8 +373,13 @@ function LetterMesh({
     s.scale += s.scaleVel * dt;
     const m = ref.current;
     if (m) {
-      m.rotation.set(s.rotX, s.rotY, 0);
-      m.scale.setScalar(s.scale);
+      m.position.set(position[0] * reveal, position[1] * reveal, position[2] * reveal);
+      m.rotation.set(
+        s.rotX + initialRotation[0] * (1 - reveal),
+        s.rotY + initialRotation[1] * (1 - reveal),
+        0
+      );
+      m.scale.setScalar(s.scale * reveal);
     }
   });
 
@@ -246,7 +388,8 @@ function LetterMesh({
       ref={ref}
       geometry={geometry}
       material={material}
-      position={position}
+      position={[0, 0, 0]}
+      scale={0}
       onPointerOver={(e) => {
         e.stopPropagation();
         const s = st.current;
@@ -288,43 +431,55 @@ function LetterMesh({
  * distance in front of the camera while the planet spins behind it, and let each
  * glyph be flipped in 3D with the cursor.
  */
-function Title({ radius }: { radius: number }) {
+function Title() {
   const geometry = useDrcGeometry("planets/present/intro/title_vertical.drc");
-  const camera = useThree((s) => s.camera) as PerspectiveCamera;
+  const camera = useThree((s) => s.camera);
   const groupRef = useRef<Group>(null);
 
   const material = useMemo(
-    () => new MeshBasicMaterial({ color: new Color("#f6f4ec"), side: DoubleSide }),
+    () =>
+      new ShaderMaterial({
+        side: DoubleSide,
+        uniforms: {
+          uFront: { value: new Color("#f8f8f8") },
+          uSide: { value: new Color("#a0a8a6") },
+        },
+        vertexShader: /* glsl */ `
+          varying vec3 vViewNormal;
+          void main() {
+            vViewNormal = normalize(normalMatrix * normal);
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          }
+        `,
+        fragmentShader: /* glsl */ `
+          uniform vec3 uFront;
+          uniform vec3 uSide;
+          varying vec3 vViewNormal;
+          void main() {
+            float facing = abs(dot(normalize(vViewNormal), vec3(0.0, 0.0, 1.0)));
+            vec3 color = mix(uFront, uSide, 1.0 - smoothstep(0.2, 0.8, facing));
+            gl_FragColor = vec4(color, 1.0);
+          }
+        `,
+      }),
     []
   );
   const letters = useMemo(() => splitByBatchId(geometry), [geometry]);
 
-  const dist = radius * 0.42;
-
-  // Scale so the title fills a fixed fraction of the view at `dist`.
-  const fillScale = useMemo(() => {
-    let minY = Infinity;
-    let maxY = -Infinity;
-    letters.forEach((g, i) => {
-      g.computeBoundingBox();
-      const b = g.boundingBox!;
-      const py = -(Math.floor(i / 3) - 1) * TITLE_GY;
-      minY = Math.min(minY, b.min.y + py);
-      maxY = Math.max(maxY, b.max.y + py);
-    });
-    const h = maxY - minY || 1;
-    const visH = 2 * dist * Math.tan(((camera.fov || 68) * Math.PI) / 360);
-    return (visH * 0.52) / h;
-  }, [letters, dist, camera]);
-
   const fwd = useMemo(() => new Vector3(), []);
-  useFrame(() => {
+  const screenUp = useMemo(() => new Vector3(), []);
+  useFrame((state) => {
     const g = groupRef.current;
     if (!g) return;
     g.quaternion.copy(camera.quaternion);
     fwd.set(0, 0, -1).applyQuaternion(camera.quaternion);
-    g.position.copy(camera.position).addScaledVector(fwd, dist);
-    g.scale.setScalar(fillScale);
+    screenUp.set(0, 1, 0).applyQuaternion(camera.quaternion);
+    g.position
+      .copy(camera.position)
+      .addScaledVector(fwd, 45)
+      .addScaledVector(screenUp, 2);
+    const mobileLayout = state.size.width < state.size.height && state.size.width < 700;
+    g.scale.setScalar(mobileLayout ? 1.2 : 1);
   });
 
   useEffect(() => () => material.dispose(), [material]);
@@ -337,6 +492,7 @@ function Title({ radius }: { radius: number }) {
           geometry={g}
           material={material}
           position={[((i % 3) - 1) * TITLE_GX, -(Math.floor(i / 3) - 1) * TITLE_GY, 0]}
+          index={i}
         />
       ))}
     </group>
@@ -435,13 +591,179 @@ function Galaxies() {
 
   useEffect(() => () => material.dispose(), [material]);
 
+  const revealStart = useRef<number | null>(null);
   useFrame((state) => {
+    if (revealStart.current === null) revealStart.current = state.clock.elapsedTime;
+    const elapsed = state.clock.elapsedTime - revealStart.current;
     material.uniforms.uTime.value = state.clock.elapsedTime;
-    const u = material.uniforms.uShow;
-    if (u.value < 1) u.value = Math.min(1, u.value + 0.02);
+    material.uniforms.uShow.value = clamp01((elapsed - 2.2) / 3);
   });
 
   return <primitive object={mesh} />;
+}
+
+/** Broken-up atmospheric shell that becomes visible around the rising planet. */
+function IntroAtmosphere() {
+  const noise = useKtx2Texture("clouds_noise_64.ktx2");
+  const geometry = useMemo(() => new SphereGeometry(38, 32, 32), []);
+  const material = useMemo(() => {
+    noise.wrapS = noise.wrapT = RepeatWrapping;
+    noise.needsUpdate = true;
+    return new ShaderMaterial({
+      side: BackSide,
+      transparent: true,
+      depthWrite: false,
+      blending: CustomBlending,
+      blendSrc: SrcAlphaFactor,
+      blendSrcAlpha: ZeroFactor,
+      blendDst: OneFactor,
+      blendDstAlpha: OneFactor,
+      uniforms: {
+        uColor: { value: new Color("#568f66") },
+        uNoise: { value: noise },
+        uShow: { value: 0 },
+      },
+      vertexShader: /* glsl */ `
+        varying vec3 vAtmosphereNormal;
+        varying vec3 vAtmospherePosition;
+        varying vec3 vAtmosphereViewPosition;
+        void main() {
+          vAtmospherePosition = position;
+          vAtmosphereNormal = normalize(normalMatrix * normal);
+          vAtmosphereViewPosition = (modelViewMatrix * vec4(position, 1.0)).xyz;
+          gl_Position = projectionMatrix * vec4(vAtmosphereViewPosition, 1.0);
+        }
+      `,
+      fragmentShader: /* glsl */ `
+        uniform sampler2D uNoise;
+        uniform vec3 uColor;
+        uniform float uShow;
+        varying vec3 vAtmosphereNormal;
+        varying vec3 vAtmospherePosition;
+        varying vec3 vAtmosphereViewPosition;
+
+        float triplanarNoise(vec3 normalDirection, vec3 positionValue) {
+          vec3 weights = pow(abs(normalDirection), vec3(4.0));
+          weights /= max(weights.x + weights.y + weights.z, 0.0001);
+          float x = texture2D(uNoise, positionValue.yz * 0.015).r;
+          float y = texture2D(uNoise, positionValue.xz * 0.015).r;
+          float z = texture2D(uNoise, positionValue.xy * 0.015).r;
+          return x * weights.x + y * weights.y + z * weights.z;
+        }
+
+        void main() {
+          float fresnel = abs(dot(normalize(vAtmosphereNormal), normalize(vAtmosphereViewPosition)));
+          float shape = triplanarNoise(vAtmosphereNormal, vAtmospherePosition);
+          shape *= 1.0 - pow(1.0 - fresnel, 2.0);
+          shape *= uShow;
+          if (shape < 0.3) discard;
+          gl_FragColor = vec4(uColor, 0.434532);
+        }
+      `,
+    });
+  }, [noise]);
+  const revealStart = useRef<number | null>(null);
+  useFrame((state) => {
+    if (revealStart.current === null) revealStart.current = state.clock.elapsedTime;
+    const elapsed = state.clock.elapsedTime - revealStart.current;
+    material.uniforms.uShow.value = Math.sin(clamp01((elapsed - 1.45) / 2.5) * Math.PI * 0.5);
+  });
+  useEffect(
+    () => () => {
+      geometry.dispose();
+      material.dispose();
+    },
+    [geometry, material]
+  );
+  return <mesh geometry={geometry} material={material} renderOrder={5} />;
+}
+
+/** Authored crumpled paper button surface; accessible text/click target stays in the DOM. */
+function IntroButtonSurface() {
+  const geometry = useDrcGeometry("planets/present/intro/button.drc");
+  const displacedGeometry = useMemo(() => {
+    const clone = geometry.clone();
+    const positions = clone.getAttribute("position");
+    const vertexIds = clone.getAttribute("vertid");
+    const direction = new Vector3();
+    const seed = 0.4371;
+    for (let index = 0; index < positions.count; index += 1) {
+      direction.fromBufferAttribute(positions, index);
+      const length = direction.length();
+      if (length === 0) continue;
+      const vertexId = vertexIds ? vertexIds.getX(index) : index;
+      const randomValue = ((seed * 54.32 + vertexId * 31.2344) % 1 + 1) % 1;
+      direction.multiplyScalar(1 + (randomValue * 0.3) / length);
+      positions.setXYZ(index, direction.x, direction.y, direction.z);
+    }
+    positions.needsUpdate = true;
+    clone.computeBoundingBox();
+    clone.computeBoundingSphere();
+    return clone;
+  }, [geometry]);
+  const groupRef = useRef<Group>(null);
+  const camera = useThree((state) => state.camera);
+  const material = useMemo(
+    () =>
+      new ShaderMaterial({
+        side: DoubleSide,
+        uniforms: {
+          uColor: { value: new Color("#f6cf5f") },
+          uColor2: { value: new Color("#bd8a42") },
+        },
+        vertexShader: /* glsl */ `
+          varying vec3 vButtonNormal;
+          void main() {
+            vButtonNormal = normalize(normalMatrix * normal);
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+          }
+        `,
+        fragmentShader: /* glsl */ `
+          uniform vec3 uColor;
+          uniform vec3 uColor2;
+          varying vec3 vButtonNormal;
+          void main() {
+            float facing = abs(dot(normalize(vButtonNormal), vec3(0.0, 0.0, 1.0)));
+            vec3 colorValue = mix(uColor, uColor2, 1.0 - smoothstep(0.2, 0.8, facing));
+            gl_FragColor = vec4(colorValue, 1.0);
+            #include <colorspace_fragment>
+          }
+        `,
+      }),
+    []
+  );
+  const start = useRef<number | null>(null);
+  const forward = useMemo(() => new Vector3(), []);
+  const screenUp = useMemo(() => new Vector3(), []);
+  useFrame((state) => {
+    if (start.current === null) start.current = state.clock.elapsedTime;
+    const elapsed = state.clock.elapsedTime - start.current;
+    const progress = clamp01((elapsed - 3.3) / 3.25);
+    const group = groupRef.current;
+    if (!group) return;
+    group.quaternion.copy(camera.quaternion);
+    group.rotateX(-Math.PI * (1 - elasticOut(progress, 0.5)));
+    forward.set(0, 0, -1).applyQuaternion(camera.quaternion);
+    screenUp.set(0, 1, 0).applyQuaternion(camera.quaternion);
+    const mobileLayout = state.size.width < state.size.height && state.size.width < 700;
+    group.position
+      .copy(camera.position)
+      .addScaledVector(forward, 45)
+      .addScaledVector(screenUp, mobileLayout ? -16 : -13.5);
+    group.scale.setScalar(elasticOut(progress, 0.9) * (mobileLayout ? 1.5 : 1));
+  });
+  useEffect(
+    () => () => {
+      displacedGeometry.dispose();
+      material.dispose();
+    },
+    [displacedGeometry, material]
+  );
+  return (
+    <group ref={groupRef}>
+      <mesh geometry={displacedGeometry} material={material} frustumCulled={false} />
+    </group>
+  );
 }
 
 /**
@@ -461,6 +783,8 @@ export default function IntroScene({
   const camera = useThree((s) => s.camera);
   const planetGeometry = useDrcGeometry("planets/present/intro/planet.drc");
   const atlas = useTexture(publicPath("/assets/images/atlas.png"));
+  const terrainNoise = useKtx2Texture("noises-terrain.ktx2");
+  const terrainDetail = useKtx2Texture("noise-simplex-layered-pixellated-highq.ktx2");
   configureAtlas(atlas);
 
   // Fires once the whole Suspense subtree (all intro geometry) has committed.
@@ -469,43 +793,68 @@ export default function IntroScene({
   }, [onReady]);
 
   const planetMaterial = useMemo(
-    () => new MeshToonMaterial({ map: atlas, gradientMap: TOON_RAMP }),
-    [atlas]
+    () => createMessengerMaterial(atlas, { fog: false, terrainNoise, terrainDetail }),
+    [atlas, terrainDetail, terrainNoise]
   );
+  useEffect(() => () => planetMaterial.dispose(), [planetMaterial]);
 
-  const { radius, center } = useMemo(() => {
-    planetGeometry.computeBoundingSphere();
-    const sphere = planetGeometry.boundingSphere;
-    return {
-      radius: sphere?.radius ?? 1,
-      center: sphere?.center.clone() ?? new Vector3(),
-    };
-  }, [planetGeometry]);
+  useEffect(() => {
+    camera.position.set(0, 0, -120);
+    camera.up.set(0, 1, 0);
+    camera.lookAt(0, -2.5, 0);
+  }, [camera]);
 
-  const target = useMemo(() => new Vector3(), []);
-
-  useFrame((state, dt) => {
-    if (world.current) world.current.rotation.y += dt * 0.08;
-    const dist = radius * 1.45;
-    const height = radius * 0.32;
-    const sway = Math.sin(state.clock.elapsedTime * 0.15) * radius * 0.1;
-    target.set(center.x + sway, center.y + height, center.z + dist);
-    camera.position.lerp(target, Math.min(1, dt * 1.5));
-    camera.lookAt(center.x, center.y + radius * 0.05, center.z);
+  const revealStart = useRef<number | null>(null);
+  useFrame((state) => {
+    if (revealStart.current === null) revealStart.current = state.clock.elapsedTime;
+    const elapsed = state.clock.elapsedTime - revealStart.current;
+    const g = world.current;
+    if (!g) return;
+    const mobileLayout = state.size.width < state.size.height && state.size.width < 700;
+    const desiredZoom = mobileLayout ? 0.8 : 1;
+    if (camera.zoom !== desiredZoom) {
+      camera.zoom = desiredZoom;
+      camera.updateProjectionMatrix();
+    }
+    const rise = quadInOut(clamp01((elapsed - 0.2) / 2.25));
+    const scale = quartInOut(clamp01((elapsed - 0.2) / 6.3));
+    const turn = quartInOut(clamp01((elapsed - 0.35) / 5.65));
+    const tip = quadInOut(clamp01((elapsed - 0.2) / 2));
+    const finalRotation = Math.PI * 0.35;
+    g.position.y = -80 + 80 * rise;
+    g.scale.setScalar(0.3 + 0.7 * scale);
+    g.rotation.x = -Math.PI + Math.PI * tip;
+    g.rotation.y = finalRotation - Math.PI * 1.5 + Math.PI * 1.5 * turn + elapsed * (Math.PI * 2 / 60);
   });
 
   return (
     <group>
       <group ref={world}>
         <mesh geometry={planetGeometry} material={planetMaterial} castShadow receiveShadow />
-        <AtlasMesh path="planets/present/intro/trees.drc" atlas={atlas} />
-        <AtlasMesh path="planets/present/intro/water.drc" atlas={atlas} cast={false} />
+        <AtlasMesh
+          path="planets/present/intro/trees.drc"
+          atlas={atlas}
+          terrainNoise={terrainNoise}
+          terrainDetail={terrainDetail}
+        />
+        <AtlasMesh
+          path="planets/present/intro/water.drc"
+          atlas={atlas}
+          terrainNoise={terrainNoise}
+          terrainDetail={terrainDetail}
+          cast={false}
+        />
         <CloudMesh path="planets/present/intro/clouds.drc" />
+        <CurveDecorations includeSmoke={false} />
+        <PresentDecorations includeBeach={false} />
       </group>
 
-      <Title radius={radius} />
+      <IntroAtmosphere />
+      <Title />
+      <IntroButtonSurface />
       <Galaxies />
-      <DrcPoints path="planets/intro/points.drc" size={0.02} color="#ffffff" />
+      <IntroParticles path="planets/intro/points.drc" />
+      <IntroBirds atlas={atlas} />
     </group>
   );
 }

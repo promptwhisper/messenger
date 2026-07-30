@@ -1,35 +1,47 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useRef } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import {
   Group,
-  Color,
   Vector3,
   Box3,
   Sphere,
-  DataTexture,
-  RedFormat,
-  NearestFilter,
-  ClampToEdgeWrapping,
-  SRGBColorSpace,
-  MeshStandardMaterial,
-  MeshToonMaterial,
-  type Texture,
 } from "three";
 import { useTexture } from "@react-three/drei";
 import { mergeBufferGeometries } from "three-stdlib";
-import { useDrcGeometry } from "@/lib/messenger/r3f/hooks";
+import { useDrcGeometry, useKtx2Texture } from "@/lib/messenger/r3f/hooks";
 import { type Outfit } from "@/lib/messenger/outfit";
 import { publicPath } from "@/lib/messenger/assets";
 import Avatar from "./Avatar";
 import NpcCharacter from "./NpcCharacter";
 import WatercolourSky from "./WatercolourSky";
+import RemotePlayers from "./RemotePlayers";
+import PresentWater from "./PresentWater";
+import PresentDecorations from "./PresentDecorations";
+import TreeLeaves from "./TreeLeaves";
+import CurveDecorations from "./CurveDecorations";
+import { createMessengerMaterial } from "@/lib/messenger/r3f/materials";
 
-// Avatar spawn point, taken verbatim from the original presentScene's
-// charPosition table (it randomly picks one of two designed open-ground spots).
-// Used as a planet-surface direction from the centre, then ray-cast onto terrain.
-const SPAWN_DIR = new Vector3(13.169294, 14.457445, 8.112895);
-const SPAWN_ROTATION = Math.PI * 0.55;
+// The reference randomly chooses one of these two authored spawn directions and
+// its paired heading. Keeping the choice stable for this scene instance avoids
+// overlapping every visitor at one deterministic point while preserving the
+// original arrival behavior.
+const SPAWN_OPTIONS = [
+  { direction: new Vector3(5.81095, 5.80205, 25.7794), rotation: Math.PI * 0.625 },
+  { direction: new Vector3(13.9316, 19.3062, 8.38147), rotation: Math.PI * 0.55 },
+] as const;
+
+function chooseSpawn() {
+  if (typeof window !== "undefined") {
+    const params = new URLSearchParams(window.location.search);
+    // A deterministic spawn is useful for multiplayer QA/capture: every real
+    // client starts at the same authored location, then a small input separates
+    // the avatars so both remain inside each other's follow camera. The normal
+    // public experience keeps the reference's random two-point arrival.
+    if (params.get("multiplayerDemo") === "1") return SPAWN_OPTIONS[0];
+  }
+  return SPAWN_OPTIONS[Math.floor(Math.random() * SPAWN_OPTIONS.length)];
+}
 
 // All 20 NPCs from the original present scene. Each is placed at its exact
 // authored world position with its authored euler rotation (the original does
@@ -74,36 +86,19 @@ const NPC_PLACEMENTS: Array<{
   { id: "owl", model: `${NPC_BASE}/owl/owl.drc`, bones: `${NPC_BASE}/owl/owl-bones.drc`, clip: `${NPC_BASE}/owl/owl-idle.drc`, pos: new Vector3(-12.6002, -22.7506, -2.19052), rot: deg(544.177, -551.047, -23.0782), voice: "dialogues/male1.ogg" },
 ];
 
-// Original terrain colour: sample the shared 16x16 atlas.png by the geometry UVs
-// (the same path the characters use). Nearest + sRGB atlas with a toon ramp
-// reproduces the original's flat painted street palette.
-function createTerrainMaterial(atlasTex: Texture): MeshToonMaterial {
-  const ramp = new Uint8Array([175, 215, 255]);
-  const gradient = new DataTexture(ramp, ramp.length, 1, RedFormat);
-  gradient.minFilter = NearestFilter;
-  gradient.magFilter = NearestFilter;
-  gradient.needsUpdate = true;
-
-  atlasTex.wrapS = ClampToEdgeWrapping;
-  atlasTex.wrapT = ClampToEdgeWrapping;
-  atlasTex.minFilter = NearestFilter;
-  atlasTex.magFilter = NearestFilter;
-  atlasTex.generateMipmaps = false;
-  atlasTex.colorSpace = SRGBColorSpace;
-  atlasTex.needsUpdate = true;
-
-  return new MeshToonMaterial({ map: atlasTex, gradientMap: gradient });
-}
-
 export default function PresentScene({
   onReady,
   outfit,
   wardrobe = false,
+  introDialogue = false,
 }: {
   onReady?: () => void;
   outfit: Outfit;
   wardrobe?: boolean;
+  introDialogue?: boolean;
 }) {
+  const [spawn] = useState(chooseSpawn);
+
   // Terrain (10 material chunks), collision hull (5 chunks), water surface.
   const f0 = useDrcGeometry("planets/present/full_0.drc");
   const f1 = useDrcGeometry("planets/present/full_1.drc");
@@ -129,23 +124,17 @@ export default function PresentScene({
 
   const waterGeometry = useDrcGeometry("planets/present/water.drc");
   const atlasTex = useTexture(publicPath("/assets/images/atlas.png"));
+  const terrainNoise = useKtx2Texture("noise-simplex-layered-pixellated-highq.ktx2");
+  const terrainDetail = useKtx2Texture("noises-terrain.ktx2");
 
   useEffect(() => {
     onReady?.();
   }, [onReady]);
 
-  const terrainMaterial = useMemo(() => createTerrainMaterial(atlasTex), [atlasTex]);
-
-  const waterMaterial = useMemo(() => {
-    waterGeometry.computeVertexNormals();
-    return new MeshStandardMaterial({
-      color: new Color("#4ea3c8"),
-      transparent: true,
-      opacity: 0.78,
-      roughness: 0.15,
-      metalness: 0.1,
-    });
-  }, [waterGeometry]);
+  const terrainMaterial = useMemo(
+    () => createMessengerMaterial(atlasTex, { terrainNoise, terrainDetail }),
+    [atlasTex, terrainNoise, terrainDetail]
+  );
 
   const { center, radius } = useMemo(() => {
     const box = new Box3();
@@ -173,25 +162,29 @@ export default function PresentScene({
     return () => {
       terrainMerged?.dispose();
       hullMerged?.dispose();
+      terrainMaterial.dispose();
     };
-  }, [terrainMerged, hullMerged]);
+  }, [terrainMerged, hullMerged, terrainMaterial]);
 
   const collisionRef = useRef<Group>(null);
 
   return (
     <group>
-      <fog attach="fog" args={["#c2d6ce", 60, 240]} />
+      <fogExp2 attach="fog" args={["#9ea7b8", 0.011]} />
       <WatercolourSky />
 
       {terrainMerged ? (
-        <mesh geometry={terrainMerged} material={terrainMaterial} castShadow={false} receiveShadow={false} />
+        <mesh geometry={terrainMerged} material={terrainMaterial} castShadow receiveShadow />
       ) : (
         full.map((g, i) => (
-          <mesh key={`t${i}`} geometry={g} material={terrainMaterial} castShadow={false} receiveShadow={false} />
+          <mesh key={`t${i}`} geometry={g} material={terrainMaterial} castShadow receiveShadow />
         ))
       )}
 
-      <mesh geometry={waterGeometry} material={waterMaterial} renderOrder={1} />
+      <PresentWater geometry={waterGeometry} />
+      <PresentDecorations />
+      <TreeLeaves />
+      <CurveDecorations />
 
       {/* Invisible collision hull; still hit by the avatar's ground raycast. */}
       <group ref={collisionRef} visible={false}>
@@ -207,10 +200,12 @@ export default function PresentScene({
         radius={radius}
         surface={collisionRef}
         outfit={outfit}
-        initialDir={SPAWN_DIR}
-        initialRotation={SPAWN_ROTATION}
+        initialDir={spawn.direction}
+        initialRotation={spawn.rotation}
         wardrobe={wardrobe}
+        introDialogue={introDialogue}
       />
+      <RemotePlayers />
 
       {NPC_PLACEMENTS.map((npc) => (
         <Suspense key={npc.id} fallback={null}>

@@ -17,7 +17,20 @@ export interface DeviceProfile {
 
 export function getDeviceProfile(): DeviceProfile {
   if (typeof navigator === "undefined" || typeof window === "undefined") {
-    return { tier: "high", dpr: [1, 2], shadowMapSize: 4096, touch: false };
+    return { tier: "high", dpr: [0.75, 1.15], shadowMapSize: 2400, touch: false };
+  }
+
+  // Headless multiplayer capture renders two live WebGL clients at once. The
+  // default capture mode trades internal resolution for smoothness; the HD
+  // mode keeps a true 1:1 render buffer so exported proof footage remains
+  // sharp after it is placed into a vertical composition. Both modes are
+  // opt-in and never change the normal visitor experience.
+  const captureMode = new URLSearchParams(window.location.search).get("capture");
+  if (captureMode === "hd") {
+    return { tier: "low", dpr: [1, 1], shadowMapSize: 1024, touch: false };
+  }
+  if (captureMode === "1") {
+    return { tier: "low", dpr: [0.55, 0.65], shadowMapSize: 512, touch: false };
   }
 
   const ua = navigator.userAgent || "";
@@ -40,8 +53,11 @@ export function getDeviceProfile(): DeviceProfile {
 
   const low = isMobile || lowMemory || lowCores || coarsePointer;
   if (low) {
-    // Phones: cap pixel ratio harder to save fill-rate.
-    return { tier: "low", dpr: [1, 1.5], shadowMapSize: 2048, touch };
+    // The original uses 1024px shadows on iPhone-class devices.
+    return { tier: "low", dpr: [0.75, 1], shadowMapSize: 1024, touch };
   }
-  return { tier: "high", dpr: [1, 2], shadowMapSize: 4096, touch };
+  // Original cap: 1.15 for DPR <= 2, otherwise 1.5. The lower bound is used
+  // only by our adaptive fallback when sustained frame time drops.
+  const maxDpr = window.devicePixelRatio <= 2 ? 1.15 : 1.5;
+  return { tier: "high", dpr: [0.75, maxDpr], shadowMapSize: 2400, touch };
 }

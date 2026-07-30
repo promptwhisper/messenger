@@ -7,20 +7,16 @@ import {
   Group,
   Bone,
   SkinnedMesh,
-  MeshToonMaterial,
+  MeshPhongMaterial,
   Vector3,
   Matrix4,
   CatmullRomCurve3,
   AnimationMixer,
   LoopRepeat,
   RepeatWrapping,
-  ClampToEdgeWrapping,
   LinearFilter,
-  NearestFilter,
-  DataTexture,
-  RedFormat,
-  SRGBColorSpace,
   type Texture,
+  type WebGLRenderer,
   type WebGLProgramParametersWithUniforms,
 } from "three";
 import { useDrcGeometry, useKtx2Texture } from "@/lib/messenger/r3f/hooks";
@@ -28,16 +24,10 @@ import { buildSkeleton, buildClip } from "@/lib/messenger/r3f/skeleton";
 import { playerPosition, INTERACT_RANGE } from "@/lib/messenger/r3f/interaction";
 import { play } from "@/lib/messenger/audio";
 import { publicPath } from "@/lib/messenger/assets";
-
-// Flat 3-step toon ramp, matching the avatar's hand-drawn shading.
-const TOON_RAMP = (() => {
-  const ramp = new Uint8Array([150, 205, 255]);
-  const tex = new DataTexture(ramp, ramp.length, 1, RedFormat);
-  tex.minFilter = NearestFilter;
-  tex.magFilter = NearestFilter;
-  tex.needsUpdate = true;
-  return tex;
-})();
+import {
+  configureMessengerAtlas,
+  createMessengerMaterial,
+} from "@/lib/messenger/r3f/materials";
 
 function stableProgress(id: string): number {
   let hash = 0;
@@ -54,14 +44,8 @@ function stableProgress(id: string): number {
  * eye-sprite overlay the avatar uses is layered on top for the humanoid heads,
  * whose eye UVs live at uv.y > 1 (animals have no such UVs, so it's a no-op).
  */
-function makeNpcFaceMaterial(eyeTex: Texture, atlasTex: Texture): MeshToonMaterial {
-  atlasTex.wrapS = ClampToEdgeWrapping;
-  atlasTex.wrapT = ClampToEdgeWrapping;
-  atlasTex.minFilter = NearestFilter;
-  atlasTex.magFilter = NearestFilter;
-  atlasTex.generateMipmaps = false;
-  atlasTex.colorSpace = SRGBColorSpace;
-  atlasTex.needsUpdate = true;
+function makeNpcFaceMaterial(eyeTex: Texture, atlasTex: Texture): MeshPhongMaterial {
+  configureMessengerAtlas(atlasTex);
 
   eyeTex.wrapS = RepeatWrapping;
   eyeTex.wrapT = RepeatWrapping;
@@ -70,8 +54,14 @@ function makeNpcFaceMaterial(eyeTex: Texture, atlasTex: Texture): MeshToonMateri
   eyeTex.generateMipmaps = false;
   eyeTex.needsUpdate = true;
 
-  const mat = new MeshToonMaterial({ map: atlasTex, gradientMap: TOON_RAMP });
-  mat.onBeforeCompile = (shader: WebGLProgramParametersWithUniforms) => {
+  const mat = createMessengerMaterial(atlasTex, { character: true });
+  const compileMessengerMaterial = mat.onBeforeCompile;
+  mat.customProgramCacheKey = () => "messenger-npc-face-v2";
+  mat.onBeforeCompile = (
+    shader: WebGLProgramParametersWithUniforms,
+    renderer: WebGLRenderer
+  ) => {
+    compileMessengerMaterial.call(mat, shader, renderer);
     shader.uniforms.tEye = { value: eyeTex };
     shader.uniforms.uTime = { value: 0 };
     mat.userData.shader = shader;
@@ -145,6 +135,8 @@ export default function NpcCharacter({
     const material = makeNpcFaceMaterial(eyeTex, atlasTex);
     const skinned = new SkinnedMesh(meshGeometry, material);
     skinned.frustumCulled = false;
+    skinned.castShadow = true;
+    skinned.receiveShadow = true;
     skinned.add(root);
     skinned.bind(skeleton);
     skinned.normalizeSkinWeights();

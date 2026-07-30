@@ -2,9 +2,11 @@
 
 import { Suspense, useCallback, useEffect, useState } from "react";
 import { Canvas } from "@react-three/fiber";
-import { ACESFilmicToneMapping } from "three";
+import { NoToneMapping } from "three";
 import { getDeviceProfile } from "@/lib/messenger/device";
-import { EffectComposer } from "@react-three/postprocessing";
+import { EffectComposer, SMAA } from "@react-three/postprocessing";
+import { PerformanceMonitor } from "@react-three/drei";
+import { SMAAPreset } from "postprocessing";
 import IntroScene from "./IntroScene";
 import PresentScene from "./PresentScene";
 import OutlineEdge from "./effects/OutlineEdge";
@@ -12,23 +14,20 @@ import Lut3D from "./effects/Lut3D";
 import PaperGrain from "./effects/PaperGrain";
 import WardrobePanel from "@/components/WardrobePanel";
 import TouchControls from "@/components/TouchControls";
-import { type Outfit, DEFAULT_OUTFIT } from "@/lib/messenger/outfit";
+import EmojiPanel from "@/components/EmojiPanel";
+import {
+  type Outfit,
+  DEFAULT_OUTFIT,
+  loadOrCreateOutfit,
+  saveOutfit,
+} from "@/lib/messenger/outfit";
 import { play, playMusic, unlockAudio, setMuted } from "@/lib/messenger/audio";
 import { publicPath } from "@/lib/messenger/assets";
-
-// Hand-drawn line-style HUD icons (stroke = currentColor so they invert on the
-// active/dark button state), matching the original's hand-drawn UI look instead
-// of flat emoji.
-const ICON_PROPS = {
-  viewBox: "0 0 24 24",
-  width: 26,
-  height: 26,
-  fill: "none",
-  stroke: "currentColor",
-  strokeWidth: 2.4,
-  strokeLinecap: "round",
-  strokeLinejoin: "round",
-} as const;
+import { multiplayer } from "@/lib/messenger/multiplayer/client";
+import { useMultiplayerSnapshot } from "@/lib/messenger/multiplayer/hooks";
+import { EMOJI_KEY_MAP } from "@/lib/messenger/multiplayer/protocol";
+import MessengerLighting from "./MessengerLighting";
+import RenderMetrics from "./RenderMetrics";
 
 // White PNG icons are used as CSS masks so each takes the button's currentColor
 // and inverts on the active state. Fullscreen uses a currentColor line icon.
@@ -47,26 +46,22 @@ const ICONS = {
   soundOn: <MaskIcon src={publicPath("/images/icons/sound.png")} />,
   soundOff: <MaskIcon src={publicPath("/images/icons/sound-muted.png")} />,
   info: <MaskIcon src={publicPath("/images/icons/list.png")} />,
-  style: (
-    <svg {...ICON_PROPS} aria-hidden="true">
-      <path d="M12 3.5a8.5 8.5 0 1 0 0 17h1.2a1.8 1.8 0 0 0 0-3.6h-.7a1.2 1.2 0 0 1 0-2.4H15a5.5 5.5 0 0 0 0-11Z" />
-      <circle cx="7.7" cy="9" r="1" fill="currentColor" stroke="none" />
-      <circle cx="10.2" cy="6.8" r="1" fill="currentColor" stroke="none" />
-      <circle cx="14" cy="7" r="1" fill="currentColor" stroke="none" />
-      <circle cx="16.3" cy="10" r="1" fill="currentColor" stroke="none" />
-    </svg>
-  ),
-  fullscreen: (
-    <svg {...ICON_PROPS} aria-hidden="true">
-      <path d="M4.5 9V4.5H9M15 4.5h4.5V9M19.5 15v4.5H15M9 19.5H4.5V15" />
-    </svg>
-  ),
-  fullscreenExit: (
-    <svg {...ICON_PROPS} aria-hidden="true">
-      <path d="M9 4.5V9H4.5M19.5 9H15V4.5M15 19.5V15h4.5M4.5 15H9v4.5" />
-    </svg>
-  ),
+  emoji: <MaskIcon src={publicPath("/images/icons/poo.svg")} />,
 };
+
+const INTRO_DIALOGUE = [
+  "Looks like I slept in... I better start today's deliveries.",
+  "I've got five on the list. Hopefully they're easy to find.",
+  "Alright, I better get going.",
+] as const;
+
+const QUEST_CHECKLIST = [
+  { key: "employee", lines: ["Falling off the corporate", "ladder (0/3)"] },
+  { key: "caveman", lines: ["A man who's hiding from", "something (0/3)"] },
+  { key: "scientists", lines: ["Scientists and mixed-up", "deliveries (0/3)"] },
+  { key: "temple", lines: ["An offering to the mountain", "temple (0/2)"] },
+  { key: "musician", lines: ["A note lost at sea (0/2)"] },
+] as const;
 
 type VisualStyle = "watercolor" | "anime" | "manga" | "print";
 
@@ -99,25 +94,23 @@ interface VisualStylePreset {
   };
 }
 
-const VISUAL_STYLE_ORDER: VisualStyle[] = ["watercolor", "anime", "manga", "print"];
-const VISUAL_STYLE_STORAGE_KEY = "messenger-visual-style";
 const VISUAL_STYLE_PRESETS: Record<VisualStyle, VisualStylePreset> = {
   watercolor: {
     label: "水彩原版",
     shortLabel: "水彩",
     outline: {
-      color: "#3a3531",
-      strength: 0.9,
-      threshold: 0.07,
-      normalStrength: 0.85,
-      normalThreshold: 0.46,
-      width: 1.3,
+      color: "#363a3c",
+      strength: 1,
+      threshold: 0.0001,
+      normalStrength: 0.3,
+      normalThreshold: 0.4,
+      width: 1,
     },
-    lut: 0.85,
+    lut: 1,
     grade: {
-      saturation: 0.82,
-      grain: 0.1,
-      brightness: 1.03,
+      saturation: 1,
+      grain: 0,
+      brightness: 1,
       contrast: 1,
       warmth: 0,
       vignette: 0,
@@ -136,7 +129,7 @@ const VISUAL_STYLE_PRESETS: Record<VisualStyle, VisualStylePreset> = {
     outline: {
       color: "#34434b",
       strength: 0.74,
-      threshold: 0.085,
+      threshold: 0.00015,
       normalStrength: 0.58,
       normalThreshold: 0.55,
       width: 0.9,
@@ -164,7 +157,7 @@ const VISUAL_STYLE_PRESETS: Record<VisualStyle, VisualStylePreset> = {
     outline: {
       color: "#171717",
       strength: 1,
-      threshold: 0.055,
+      threshold: 0.00008,
       normalStrength: 0.98,
       normalThreshold: 0.38,
       width: 1.55,
@@ -192,7 +185,7 @@ const VISUAL_STYLE_PRESETS: Record<VisualStyle, VisualStylePreset> = {
     outline: {
       color: "#171412",
       strength: 1,
-      threshold: 0.045,
+      threshold: 0.00006,
       normalStrength: 1,
       normalThreshold: 0.36,
       width: 1.75,
@@ -216,10 +209,6 @@ const VISUAL_STYLE_PRESETS: Record<VisualStyle, VisualStylePreset> = {
   },
 };
 
-function isVisualStyle(value: string | null): value is VisualStyle {
-  return VISUAL_STYLE_ORDER.includes(value as VisualStyle);
-}
-
 /**
  * Hand-built React + Three.js (R3F) rebuild of the Messenger experience.
  * - Phase 1: loading → BEGIN intro (title planet) + camera.
@@ -233,14 +222,19 @@ export default function RebuiltExperience() {
   const [presentReady, setPresentReady] = useState(false);
   const [begun, setBegun] = useState(false);
   const [outfit, setOutfit] = useState<Outfit>(DEFAULT_OUTFIT);
+  const [outfitReady, setOutfitReady] = useState(false);
   const [wardrobeOpen, setWardrobeOpen] = useState(false);
   const [muted, setMutedState] = useState(false);
   const [infoOpen, setInfoOpen] = useState(false);
-  const [fullscreen, setFullscreen] = useState(false);
-  const [visualStyle, setVisualStyle] = useState<VisualStyle>("watercolor");
-  const [styleNoticeVisible, setStyleNoticeVisible] = useState(false);
+  const [emojiOpen, setEmojiOpen] = useState(false);
+  const [dialogueStep, setDialogueStep] = useState(0);
+  const visualStyle: VisualStyle = "watercolor";
+  const [rendererCanvas, setRendererCanvas] = useState<HTMLCanvasElement | null>(null);
+  const [webglLost, setWebglLost] = useState(false);
   // Scale render resolution + shadow map to the device once on mount.
   const [device] = useState(getDeviceProfile);
+  const [renderDpr, setRenderDpr] = useState(() => getDeviceProfile().dpr[1]);
+  const multiplayerSnapshot = useMultiplayerSnapshot();
   const stylePreset = VISUAL_STYLE_PRESETS[visualStyle];
 
   const handleIntroReady = useCallback(() => setIntroReady(true), []);
@@ -254,24 +248,6 @@ export default function RebuiltExperience() {
     });
   }, []);
 
-  const toggleFullscreen = useCallback(() => {
-    const el = document.documentElement;
-    if (!document.fullscreenElement) {
-      void el.requestFullscreen?.().then(() => setFullscreen(true)).catch(() => {});
-    } else {
-      void document.exitFullscreen?.().then(() => setFullscreen(false)).catch(() => {});
-    }
-  }, []);
-
-  const cycleVisualStyle = useCallback(() => {
-    const currentIndex = VISUAL_STYLE_ORDER.indexOf(visualStyle);
-    const next = VISUAL_STYLE_ORDER[(currentIndex + 1) % VISUAL_STYLE_ORDER.length];
-    setVisualStyle(next);
-    window.localStorage.setItem(VISUAL_STYLE_STORAGE_KEY, next);
-    setStyleNoticeVisible(true);
-    void play("ui/paper1.ogg", 0.24);
-  }, [visualStyle]);
-
   const handleBegin = useCallback(() => {
     unlockAudio();
     void play("intro/button-turn.ogg", 0.6);
@@ -282,53 +258,108 @@ export default function RebuiltExperience() {
   }, []);
 
   useEffect(() => {
-    const sync = () => setFullscreen(Boolean(document.fullscreenElement));
-    document.addEventListener("fullscreenchange", sync);
-    return () => document.removeEventListener("fullscreenchange", sync);
-  }, []);
+    if (!rendererCanvas) return;
+    const handleLost: EventListener = (event) => {
+      event.preventDefault();
+      setWebglLost(true);
+    };
+    const handleRestored = () => setWebglLost(false);
+    rendererCanvas.addEventListener("webglcontextlost", handleLost);
+    rendererCanvas.addEventListener("webglcontextrestored", handleRestored);
+    return () => {
+      rendererCanvas.removeEventListener("webglcontextlost", handleLost);
+      rendererCanvas.removeEventListener("webglcontextrestored", handleRestored);
+    };
+  }, [rendererCanvas]);
 
   useEffect(() => {
-    const savedStyle = window.localStorage.getItem(VISUAL_STYLE_STORAGE_KEY);
-    if (!isVisualStyle(savedStyle)) return;
-    const frame = window.requestAnimationFrame(() => setVisualStyle(savedStyle));
+    const restored = loadOrCreateOutfit(window.localStorage);
+    const frame = window.requestAnimationFrame(() => {
+      setOutfit(restored);
+      setOutfitReady(true);
+    });
     return () => window.cancelAnimationFrame(frame);
   }, []);
 
   useEffect(() => {
-    if (!styleNoticeVisible) return;
-    const timeout = window.setTimeout(() => setStyleNoticeVisible(false), 1400);
-    return () => window.clearTimeout(timeout);
-  }, [styleNoticeVisible, visualStyle]);
+    if (!outfitReady) return;
+    saveOutfit(window.localStorage, outfit);
+    multiplayer.setOutfit(outfit);
+  }, [outfit, outfitReady]);
 
-  const loading = begun ? !presentReady : !introReady;
+  useEffect(() => {
+    if (!begun || !presentReady) return;
+    multiplayer.connect();
+    return () => multiplayer.disconnect();
+  }, [begun, presentReady]);
+
+  useEffect(() => {
+    if (!begun || !presentReady) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target;
+      if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return;
+      const emoji = EMOJI_KEY_MAP[event.key];
+      if (emoji === undefined) return;
+      event.preventDefault();
+      multiplayer.sendEmoji(emoji);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [begun, presentReady]);
+
+  const selectEmoji = useCallback((id: number) => {
+    multiplayer.sendEmoji(id);
+  }, []);
+
+  const loading = begun ? !presentReady || !outfitReady : !introReady;
+  const introDialogueOpen = begun && presentReady && dialogueStep < INTRO_DIALOGUE.length;
 
   return (
-    <div className={`messenger-stage${begun ? "" : " messenger-stage--intro"}`}>
+    <div
+      className={`messenger-stage${begun ? "" : " messenger-stage--intro"}`}
+      data-player-outfit={`${outfit.hair}-${outfit.top}-${outfit.bottom}-${outfit.shoes}`}
+      data-multiplayer-status={multiplayerSnapshot.status}
+      data-peer-count={multiplayerSnapshot.peers.length}
+      data-peer-outfits={multiplayerSnapshot.peers
+        .map((peer) => `${peer.id}:${peer.outfit.hair}-${peer.outfit.top}-${peer.outfit.bottom}-${peer.outfit.shoes}`)
+        .sort()
+        .join("|")}
+      data-peer-emojis={multiplayerSnapshot.peers
+        .filter((peer) => peer.emoji)
+        .map((peer) => `${peer.id}:${peer.emoji!.id}:${peer.emoji!.nonce}`)
+        .sort()
+        .join("|")}
+    >
       <Canvas
-        shadows
-        dpr={device.dpr}
-        camera={{ fov: 68, near: 0.1, far: 5000, position: [0, 2, 14] }}
-        gl={{ antialias: true, toneMapping: ACESFilmicToneMapping }}
-        onCreated={({ scene }) => {
-          scene.background = null;
+        shadows="percentage"
+        dpr={renderDpr}
+        camera={{ fov: 45, near: 0.1, far: 1000, position: [0, 0, -120] }}
+        gl={{
+          alpha: false,
+          antialias: false,
+          stencil: false,
+          depth: false,
+          toneMapping: NoToneMapping,
+          powerPreference: "high-performance",
+        }}
+        onCreated={({ gl }) => {
+          setRendererCanvas(gl.domElement);
         }}
       >
-        <hemisphereLight args={["#eef6ff", "#aab48c", 1.15]} />
-        <ambientLight intensity={0.78} />
-        <directionalLight
-          position={[45, 80, 30]}
-          intensity={0.35}
-          color="#fff3df"
-          castShadow={false}
-          shadow-mapSize-width={device.shadowMapSize}
-          shadow-mapSize-height={device.shadowMapSize}
-          shadow-camera-far={320}
-          shadow-camera-left={-90}
-          shadow-camera-right={90}
-          shadow-camera-top={90}
-          shadow-camera-bottom={-90}
-          shadow-bias={-0.0005}
+        <color attach="background" args={["#75bdc3"]} />
+        <PerformanceMonitor
+          iterations={8}
+          ms={250}
+          threshold={0.75}
+          bounds={(refreshRate) => (refreshRate > 90 ? [55, 90] : [45, 60])}
+          onChange={({ factor }) => {
+            const [minimum, maximum] = device.dpr;
+            const next = minimum + (maximum - minimum) * factor;
+            setRenderDpr(Math.round(next * 20) / 20);
+          }}
         />
+        <RenderMetrics dpr={renderDpr} />
+        <MessengerLighting present={begun} shadowMapSize={device.shadowMapSize} />
 
         {!begun && (
           <Suspense fallback={null}>
@@ -336,37 +367,56 @@ export default function RebuiltExperience() {
           </Suspense>
         )}
 
-        {begun && (
+        {begun && outfitReady && (
           <Suspense fallback={null}>
-            <PresentScene onReady={handlePresentReady} outfit={outfit} wardrobe={wardrobeOpen} />
+            <PresentScene
+              onReady={handlePresentReady}
+              outfit={outfit}
+              wardrobe={wardrobeOpen}
+              introDialogue={introDialogueOpen}
+            />
           </Suspense>
         )}
 
-        {/* High tier: cartoon outline (needs a full normal pass) + MSAA + LUT +
-            grain. Low/mobile tier: drop the normal pass, outline and MSAA (the
-            biggest GPU cost) and keep only the cheap colour-grade + paper grain. */}
+        {/* The reference renders without native MSAA, then applies its outline,
+            3D LUT and high-quality SMAA. Low tier keeps silhouette depth edges
+            but skips the extra full-scene normal pass. */}
         {device.tier === "high" ? (
-          <EffectComposer multisampling={4} enableNormalPass>
+          <EffectComposer multisampling={0} enableNormalPass>
             <OutlineEdge
               color={stylePreset.outline.color}
               strength={stylePreset.outline.strength}
               threshold={stylePreset.outline.threshold}
-              normalStrength={stylePreset.outline.normalStrength}
-              normalThreshold={stylePreset.outline.normalThreshold}
-              width={stylePreset.outline.width}
+              normalStrength={begun ? stylePreset.outline.normalStrength : 0.72}
+              normalThreshold={begun ? stylePreset.outline.normalThreshold : 0.2}
+              width={begun ? stylePreset.outline.width : 1.1}
+              fadeNear={begun ? 5 : 0}
+              fadeFar={begun ? 120 : 155}
             />
             <Lut3D intensity={stylePreset.lut} />
             <PaperGrain {...stylePreset.grade} />
+            <SMAA preset={SMAAPreset.HIGH} />
           </EffectComposer>
         ) : (
           <EffectComposer multisampling={0}>
+            <OutlineEdge
+              color={stylePreset.outline.color}
+              strength={stylePreset.outline.strength}
+              threshold={stylePreset.outline.threshold}
+              normalStrength={0}
+              normalThreshold={stylePreset.outline.normalThreshold}
+              width={stylePreset.outline.width}
+              fadeNear={begun ? 5 : 0}
+              fadeFar={begun ? 120 : 155}
+            />
             <Lut3D intensity={stylePreset.lut} />
             <PaperGrain {...stylePreset.grade} />
+            <SMAA preset={SMAAPreset.HIGH} />
           </EffectComposer>
         )}
       </Canvas>
 
-      {loading && (
+      {(loading || webglLost) && (
         <div className="messenger-splash" role="status" aria-label="Loading Messenger">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
@@ -381,46 +431,49 @@ export default function RebuiltExperience() {
 
       {!begun && introReady && (
         <button type="button" className="messenger-begin" onClick={handleBegin} aria-label="BEGIN">
-          <span
-            aria-hidden="true"
-            className="messenger-begin__label"
-            style={{
-              WebkitMaskImage: `url(${publicPath("/images/icons/begin.png")})`,
-              maskImage: `url(${publicPath("/images/icons/begin.png")})`,
-            }}
-          />
+          <span aria-hidden="true" className="messenger-begin__label">BEGIN</span>
         </button>
       )}
 
-      {begun && presentReady && (
+      {introDialogueOpen && (
+        <div className="messenger-dialogue" role="dialog" aria-label="Messenger introduction">
+          <div className="messenger-dialogue__tag" aria-hidden="true">MESSENGER</div>
+          <div className="messenger-dialogue__card">
+            <p key={dialogueStep}>{INTRO_DIALOGUE[dialogueStep]}</p>
+          </div>
+          <button
+            type="button"
+            className="messenger-dialogue__continue"
+            onClick={() => {
+              void play("ui/title.ogg", 0.28);
+              setDialogueStep((step) => Math.min(INTRO_DIALOGUE.length, step + 1));
+            }}
+            aria-label="Continue"
+          >
+            <span aria-hidden="true" />
+          </button>
+        </div>
+      )}
+
+      {begun && presentReady && !introDialogueOpen && (
         <>
           {!wardrobeOpen && (
           <div className="messenger-hud">
             <button
               type="button"
-              className={`messenger-hud__btn${wardrobeOpen ? " messenger-hud__btn--active" : ""}`}
-              onClick={() => setWardrobeOpen((o) => !o)}
-              aria-label="换装"
-              title="换装"
+              className={`messenger-hud__btn messenger-hud__btn--quest${infoOpen ? " messenger-hud__btn--active" : ""}`}
+              onClick={() => {
+                setInfoOpen((open) => !open);
+                setEmojiOpen(false);
+              }}
+              aria-label="任务列表"
+              title="任务列表"
             >
-              {ICONS.shirt}
+              {ICONS.info}
             </button>
             <button
               type="button"
-              className="messenger-hud__btn messenger-hud__btn--style"
-              onClick={cycleVisualStyle}
-              aria-label={`画风：${stylePreset.label}，点击切换`}
-              title={`画风：${stylePreset.label}（点击切换）`}
-              data-testid="visual-style-toggle"
-            >
-              {ICONS.style}
-              <span className="messenger-hud__style-count" aria-hidden="true">
-                {VISUAL_STYLE_ORDER.indexOf(visualStyle) + 1}
-              </span>
-            </button>
-            <button
-              type="button"
-              className={`messenger-hud__btn${muted ? " messenger-hud__btn--active" : ""}`}
+              className={`messenger-hud__btn messenger-hud__btn--sound${muted ? " messenger-hud__btn--active" : ""}`}
               onClick={toggleMute}
               aria-label={muted ? "开启声音" : "静音"}
               title={muted ? "开启声音" : "静音"}
@@ -429,35 +482,31 @@ export default function RebuiltExperience() {
             </button>
             <button
               type="button"
-              className="messenger-hud__btn"
-              onClick={toggleFullscreen}
-              aria-label={fullscreen ? "退出全屏" : "全屏"}
-              title={fullscreen ? "退出全屏" : "全屏"}
+              className={`messenger-hud__btn messenger-hud__btn--wardrobe${wardrobeOpen ? " messenger-hud__btn--active" : ""}`}
+              onClick={() => {
+                setWardrobeOpen((open) => !open);
+                setEmojiOpen(false);
+                setInfoOpen(false);
+              }}
+              aria-label="换装"
+              title="换装"
             >
-              {fullscreen ? ICONS.fullscreenExit : ICONS.fullscreen}
+              {ICONS.shirt}
             </button>
             <button
               type="button"
-              className={`messenger-hud__btn${infoOpen ? " messenger-hud__btn--active" : ""}`}
-              onClick={() => setInfoOpen((o) => !o)}
-              aria-label="信息"
-              title="信息"
+              className={`messenger-hud__btn messenger-hud__btn--emoji${emojiOpen ? " messenger-hud__btn--active" : ""}`}
+              onClick={() => {
+                setEmojiOpen((open) => !open);
+                setInfoOpen(false);
+              }}
+              aria-label={`表情 · ${multiplayerSnapshot.status === "online" ? `${multiplayerSnapshot.peers.length + 1} 人在线` : "离线可用"}`}
+              title="表情 · 快捷键 0–9"
+              data-multiplayer-status={multiplayerSnapshot.status}
             >
-              {ICONS.info}
+              {ICONS.emoji}
             </button>
           </div>
-          )}
-
-          {styleNoticeVisible && (
-            <div
-              key={visualStyle}
-              className="messenger-style-notice"
-              role="status"
-              aria-live="polite"
-            >
-              <span>画风</span>
-              <strong>{stylePreset.label}</strong>
-            </div>
           )}
 
           {wardrobeOpen && (
@@ -468,6 +517,10 @@ export default function RebuiltExperience() {
             />
           )}
 
+          {emojiOpen && (
+            <EmojiPanel onSelect={selectEmoji} onClose={() => setEmojiOpen(false)} />
+          )}
+
           {infoOpen && (
             <div
               className="messenger-info"
@@ -476,54 +529,30 @@ export default function RebuiltExperience() {
               onClick={() => setInfoOpen(false)}
             >
               <div className="messenger-info__card" onClick={(e) => e.stopPropagation()}>
-                <h2 className="messenger-info__title">Messenger</h2>
-                <p>
-                  React + Three.js 手工重建版。复用原版的 <code>.drc</code> 几何、KTX2 贴图与
-                  <code>.ogg</code> 音频，重写了加载、镜头、角色控制与卡通着色。
-                </p>
-                <ul className="messenger-info__keys">
-                  <li><kbd>WASD</kbd> 移动</li>
-                  <li><kbd>Shift</kbd> 冲刺</li>
-                  <li><kbd>Space</kbd> 跳跃</li>
-                  <li>鼠标拖拽转视角 · 滚轮缩放</li>
-                </ul>
+                <h2 className="messenger-info__title">CHECKLIST:</h2>
+                <ol className="messenger-info__keys">
+                  {QUEST_CHECKLIST.map((quest, index) => (
+                    <li key={quest.key}>
+                      <span>{index + 1}.</span>
+                      <strong>
+                        {quest.lines.map((line) => <span key={line}>{line}</span>)}
+                      </strong>
+                    </li>
+                  ))}
+                </ol>
                 <button
                   type="button"
                   className="messenger-info__close"
                   onClick={() => setInfoOpen(false)}
+                  aria-label="关闭任务列表"
                 >
-                  关闭
+                  ×
                 </button>
               </div>
             </div>
           )}
 
-          {!wardrobeOpen && !device.touch && (
-            <div className="messenger-controls" aria-hidden="true">
-              <span className="messenger-controls__item">
-                <kbd>WASD</kbd>
-                <span>移动</span>
-              </span>
-              <span className="messenger-controls__item">
-                <kbd>拖拽</kbd>
-                <span>转视角</span>
-              </span>
-              <span className="messenger-controls__item">
-                <kbd>滚轮</kbd>
-                <span>缩放</span>
-              </span>
-              <span className="messenger-controls__item">
-                <kbd>SHIFT</kbd>
-                <span>冲刺</span>
-              </span>
-              <span className="messenger-controls__item">
-                <kbd>SPACE</kbd>
-                <span>跳跃</span>
-              </span>
-            </div>
-          )}
-
-          {!wardrobeOpen && device.touch && <TouchControls />}
+          {!wardrobeOpen && !emojiOpen && !infoOpen && device.touch && <TouchControls />}
         </>
       )}
     </div>

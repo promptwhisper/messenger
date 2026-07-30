@@ -1,4 +1,4 @@
-import { Vector3 } from "three";
+import { Quaternion, Vector3 } from "three";
 
 /**
  * Shared player world position, written by the Avatar each frame and read by
@@ -6,6 +6,9 @@ import { Vector3 } from "three";
  * the React render path (it's only read inside the r3f frame loop).
  */
 export const playerPosition = new Vector3();
+export const playerQuaternion = new Quaternion();
+export const playerUp = new Vector3(0, 1, 0);
+export const playerCameraTarget = new Vector3();
 
 /** Distance (metres) within which an NPC becomes interactable. */
 export const INTERACT_RANGE = 6;

@@ -18,18 +18,16 @@ uniform float uNormalStrength;
 uniform float uNormalThreshold;
 uniform vec2 uTexel;
 uniform float uWidth;
+uniform float uFadeNear;
+uniform float uFadeFar;
 uniform sampler2D uNormalBuffer;
 
 vec3 readNormal(const in vec2 uv) {
   return texture2D(uNormalBuffer, uv).xyz * 2.0 - 1.0;
 }
 
-// 8-neighbour sampling (incl. diagonals) over two radii so the ink line is thick
-// and continuous around every silhouette/crease, closer to the original's bold
-// hand-drawn outline than a thin 4-tap edge.
-const vec2 DIRS[8] = vec2[8](
-  vec2(1.0, 0.0), vec2(-1.0, 0.0), vec2(0.0, 1.0), vec2(0.0, -1.0),
-  vec2(0.707, 0.707), vec2(-0.707, 0.707), vec2(0.707, -0.707), vec2(-0.707, -0.707)
+const vec2 DIRS[4] = vec2[4](
+  vec2(1.0, 0.0), vec2(-1.0, 0.0), vec2(0.0, 1.0), vec2(0.0, -1.0)
 );
 
 void mainImage(const in vec4 inputColor, const in vec2 uv, const in float depth, out vec4 outputColor) {
@@ -37,24 +35,19 @@ void mainImage(const in vec4 inputColor, const in vec2 uv, const in float depth,
   float zc = -getViewZ(depth);
   vec3 nC = readNormal(uv);
 
-  // Take the strongest single-direction discontinuity (max), not the sum, so
-  // dense thin geometry (railings, boat scaffolding) doesn't accumulate into a
-  // solid black blob. Depth is relativised by view distance for consistent lines.
   float dMax = 0.0;
   float nMax = 0.0;
-  for (int i = 0; i < 8; i++) {
-    vec2 o1 = DIRS[i] * tx;
-    vec2 o2 = DIRS[i] * tx * 2.0;
-    float z1 = -getViewZ(readDepth(uv + o1));
-    float z2 = -getViewZ(readDepth(uv + o2));
-    dMax = max(dMax, max(abs(zc - z1), abs(zc - z2) * 0.8));
-    nMax = max(nMax, 1.0 - max(0.0, dot(nC, readNormal(uv + o1))));
-    nMax = max(nMax, (1.0 - max(0.0, dot(nC, readNormal(uv + o2)))) * 0.85);
+  for (int i = 0; i < 4; i++) {
+    vec2 sampleUv = clamp(uv + DIRS[i] * tx, vec2(0.0), vec2(1.0));
+    float zn = -getViewZ(readDepth(sampleUv));
+    dMax = max(dMax, abs(zc - zn) / max(zc, 1.0));
+    nMax = max(nMax, 1.0 - max(0.0, dot(nC, readNormal(sampleUv))));
   }
 
-  float depthEdge = step(uThreshold, dMax / max(zc, 1.0)) * uStrength;
-  float normalEdge = step(uNormalThreshold, nMax) * uNormalStrength;
-  float edge = max(depthEdge, normalEdge);
+  float depthEdge = smoothstep(uThreshold, uThreshold + 0.01001, dMax) * uStrength;
+  float normalEdge = smoothstep(uNormalThreshold, uNormalThreshold + 0.1, nMax) * uNormalStrength;
+  float distanceFade = 1.0 - smoothstep(uFadeNear, uFadeFar, zc);
+  float edge = max(depthEdge, normalEdge) * distanceFade;
   outputColor = vec4(mix(inputColor.rgb, uColor, edge), inputColor.a);
 }
 `;
@@ -66,16 +59,20 @@ interface OutlineEdgeOptions {
   normalStrength?: number;
   normalThreshold?: number;
   width?: number;
+  fadeNear?: number;
+  fadeFar?: number;
 }
 
 class OutlineEdgeEffectImpl extends Effect {
   constructor({
-    color = "#241f1b",
-    strength = 0.9,
-    threshold = 0.18,
-    normalStrength = 0.95,
-    normalThreshold = 0.55,
-    width = 1.6,
+    color = "#363a3c",
+    strength = 1,
+    threshold = 0.0001,
+    normalStrength = 0.3,
+    normalThreshold = 0.4,
+    width = 1,
+    fadeNear = 5,
+    fadeFar = 80,
   }: OutlineEdgeOptions = {}) {
     super("OutlineEdgeEffect", fragmentShader, {
       attributes: EffectAttribute.DEPTH,
@@ -87,6 +84,8 @@ class OutlineEdgeEffectImpl extends Effect {
         ["uNormalThreshold", new Uniform(normalThreshold)],
         ["uTexel", new Uniform(new Vector2())],
         ["uWidth", new Uniform(width)],
+        ["uFadeNear", new Uniform(fadeNear)],
+        ["uFadeFar", new Uniform(fadeFar)],
         ["uNormalBuffer", new Uniform<Texture | null>(null)],
       ]),
     });
@@ -109,6 +108,8 @@ export default function OutlineEdge(props: OutlineEdgeOptions) {
       props.normalStrength,
       props.normalThreshold,
       props.width,
+      props.fadeNear,
+      props.fadeFar,
     ]
   );
 

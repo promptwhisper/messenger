@@ -8,7 +8,7 @@ import {
   Object3D,
   Skeleton,
   SkinnedMesh,
-  MeshToonMaterial,
+  MeshPhongMaterial,
   MeshBasicMaterial,
   BackSide,
   Color,
@@ -20,42 +20,40 @@ import {
   AnimationClip,
   LoopRepeat,
   RepeatWrapping,
-  ClampToEdgeWrapping,
   LinearFilter,
-  NearestFilter,
-  DataTexture,
-  RedFormat,
-  SRGBColorSpace,
   type BufferGeometry,
   type AnimationAction,
   type Texture,
+  type PerspectiveCamera,
+  type WebGLRenderer,
   type WebGLProgramParametersWithUniforms,
 } from "three";
 import { useTexture } from "@react-three/drei";
 import { useDrcGeometry, useKtx2Texture } from "@/lib/messenger/r3f/hooks";
 import { buildSkeleton, buildClip } from "@/lib/messenger/r3f/skeleton";
 import { useKeyboard } from "@/lib/messenger/r3f/useKeyboard";
-import { playerPosition } from "@/lib/messenger/r3f/interaction";
+import {
+  playerCameraTarget,
+  playerPosition,
+  playerQuaternion,
+  playerUp,
+} from "@/lib/messenger/r3f/interaction";
 import { play } from "@/lib/messenger/audio";
 import { type Outfit } from "@/lib/messenger/outfit";
 import { publicPath } from "@/lib/messenger/assets";
-
-// Shared 3-step toon ramp giving the character flat, hand-drawn-ish shading
-// instead of smooth 3D lighting.
-const TOON_RAMP = (() => {
-  const ramp = new Uint8Array([150, 205, 255]);
-  const tex = new DataTexture(ramp, ramp.length, 1, RedFormat);
-  tex.minFilter = NearestFilter;
-  tex.magFilter = NearestFilter;
-  tex.needsUpdate = true;
-  return tex;
-})();
+import { multiplayer } from "@/lib/messenger/multiplayer/client";
+import { useMultiplayerSnapshot } from "@/lib/messenger/multiplayer/hooks";
+import PlayerEmoji from "./PlayerEmoji";
+import {
+  configureMessengerAtlas,
+  createMessengerMaterial,
+} from "@/lib/messenger/r3f/materials";
 
 // Per-part black outline so the bag/clothes/hair read as distinct layers (the
 // screen-space outline can't separate parts that share depth+normal, e.g. a bag
 // pressed against the back). This is a classic inverted-hull: render back-faces
 // pushed out along the skinned normal, drawn behind the lit mesh.
-const OUTLINE_THICKNESS = 0.014;
+const OUTLINE_THICKNESS = 0.004;
 const OUTLINE_MATERIAL = (() => {
   const mat = new MeshBasicMaterial({ color: new Color("#2b2622"), side: BackSide });
   mat.onBeforeCompile = (shader) => {
@@ -71,7 +69,7 @@ const OUTLINE_MATERIAL = (() => {
 })();
 
 /** Build the inverted-hull outline twin for a skinned part. */
-function makeOutlineMesh(geometry: BufferGeometry, skeleton: Skeleton): SkinnedMesh {
+export function makeOutlineMesh(geometry: BufferGeometry, skeleton: Skeleton): SkinnedMesh {
   const mesh = new SkinnedMesh(geometry, OUTLINE_MATERIAL);
   mesh.frustumCulled = false;
   mesh.bind(skeleton, new Matrix4());
@@ -86,7 +84,7 @@ function makeOutlineMesh(geometry: BufferGeometry, skeleton: Skeleton): SkinnedM
  * the mesh UVs (not per-slot tinting), so switching a variant changes its look
  * via its own UVs. Re-mounts when the variant path changes.
  */
-function AccessorySlot({
+export function AccessorySlot({
   path,
   atlasTex,
   skeleton,
@@ -99,9 +97,11 @@ function AccessorySlot({
 }) {
   const geometry = useDrcGeometry(path);
   useEffect(() => {
-    const material = new MeshToonMaterial({ map: atlasTex, gradientMap: TOON_RAMP });
+    const material = createMessengerMaterial(atlasTex, { character: true });
     const mesh = new SkinnedMesh(geometry, material);
     mesh.frustumCulled = false;
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
     mesh.bind(skeleton, new Matrix4());
     // Some Draco-decoded accessories have skin weights that don't sum to 1 on a
     // few verts; without this they get pulled toward the skeleton root and the
@@ -126,14 +126,8 @@ function AccessorySlot({
  * band y>1 (with a random blink) over the skin colour. The original main char
  * has no mouth and no mask.
  */
-function makeFaceMaterial(eyeTex: Texture, atlasTex: Texture): MeshToonMaterial {
-  atlasTex.wrapS = ClampToEdgeWrapping;
-  atlasTex.wrapT = ClampToEdgeWrapping;
-  atlasTex.minFilter = NearestFilter;
-  atlasTex.magFilter = NearestFilter;
-  atlasTex.generateMipmaps = false;
-  atlasTex.colorSpace = SRGBColorSpace;
-  atlasTex.needsUpdate = true;
+export function makeFaceMaterial(eyeTex: Texture, atlasTex: Texture): MeshPhongMaterial {
+  configureMessengerAtlas(atlasTex);
 
   eyeTex.wrapS = RepeatWrapping; // eye UVs live outside [0,1] (y>1)
   eyeTex.wrapT = RepeatWrapping;
@@ -142,8 +136,14 @@ function makeFaceMaterial(eyeTex: Texture, atlasTex: Texture): MeshToonMaterial 
   eyeTex.generateMipmaps = false;
   eyeTex.needsUpdate = true;
 
-  const mat = new MeshToonMaterial({ map: atlasTex, gradientMap: TOON_RAMP });
-  mat.onBeforeCompile = (shader: WebGLProgramParametersWithUniforms) => {
+  const mat = createMessengerMaterial(atlasTex, { character: true });
+  const compileMessengerMaterial = mat.onBeforeCompile;
+  mat.customProgramCacheKey = () => "messenger-character-face-v2";
+  mat.onBeforeCompile = (
+    shader: WebGLProgramParametersWithUniforms,
+    renderer: WebGLRenderer
+  ) => {
+    compileMessengerMaterial.call(mat, shader, renderer);
     shader.uniforms.tEye = { value: eyeTex };
     shader.uniforms.uTime = { value: 0 };
     shader.uniforms.uSkinColor = { value: new Color("#ebced0") };
@@ -181,20 +181,24 @@ const WALK_SPEED = 3.2; // m/s along the surface
 const SPRINT_SPEED = 6.0;
 const JUMP_VELOCITY = 5.0; // m/s
 const GRAVITY = 18; // m/s²
-const LOOK_HEIGHT = 1.25; // look target height on the avatar
+const LOOK_HEIGHT = 1.0;
 const STEP_INTERVAL = 0.34; // seconds between footsteps at walk pace
 // Orbit camera (drag to rotate, wheel to zoom), matching the original's
 // spherical follow rig and camera-relative movement.
-const CAM_HEIGHT = 1.35;
-const CAM_DISTANCE = 4.0;
-const CAM_MIN_DIST = 3.0;
+const CAM_HEIGHT = 1.0;
+const CAM_DISTANCE = 5.0;
+const CAM_MIN_DIST = 4.0;
 const CAM_MAX_DIST = 7.5;
+const CAM_TARGET_LATERAL = -0.65;
 const CAM_ROT_SPEED = 0.005;
 // Wardrobe mode: camera swings to the avatar's front for a full-body view while
 // movement is locked (matches the original's customization screen).
-const WARDROBE_DIST = 3.1;
-const WARDROBE_HEIGHT = 0.95;
-const WARDROBE_LOOK = 0.85;
+const WARDROBE_DIST = 3.4;
+const WARDROBE_HEIGHT = 1.0;
+const WARDROBE_LOOK = 1.1;
+const DIALOGUE_DIST = 2.65;
+const DIALOGUE_HEIGHT = 1.2;
+const DIALOGUE_LOOK = 1.1;
 // Ground probe: cast from just above the avatar's head (not the planet's sky) so
 // overhead geometry (bridges, awnings) can't be picked as "ground" and teleport
 // the avatar up. Headroom must stay below any walkable overhang's clearance.
@@ -205,14 +209,14 @@ const GROUND_MAX_DROP = 4.0;
 // walks — so we cap it at ~30Hz instead of every rendered frame.
 const SCENE_RAY_INTERVAL = 1 / 30;
 
-const ANIMATION_FILES = {
+export const ANIMATION_FILES = {
   idle: "avatar/avatar-idle.drc",
   run: "avatar/avatar-run.drc",
   sprint: "avatar/avatar-sprint.drc",
   air: "avatar/avatar-air.drc",
 } as const;
 
-type AnimName = keyof typeof ANIMATION_FILES;
+export type AnimName = keyof typeof ANIMATION_FILES;
 
 export default function Avatar({
   center,
@@ -222,6 +226,7 @@ export default function Avatar({
   initialDir,
   initialRotation = 0,
   wardrobe = false,
+  introDialogue = false,
 }: {
   center: Vector3;
   radius: number;
@@ -230,16 +235,31 @@ export default function Avatar({
   initialDir?: Vector3;
   initialRotation?: number;
   wardrobe?: boolean;
+  introDialogue?: boolean;
 }) {
   const camera = useThree((s) => s.camera);
   const gl = useThree((s) => s.gl);
   const input = useKeyboard();
+  const { localEmoji } = useMultiplayerSnapshot();
 
   // keep the latest wardrobe flag readable inside the frame loop
   const wardrobeRef = useRef(wardrobe);
+  const dialogueRef = useRef(introDialogue);
   useEffect(() => {
     wardrobeRef.current = wardrobe;
   }, [wardrobe]);
+  useEffect(() => {
+    dialogueRef.current = introDialogue;
+  }, [introDialogue]);
+
+  useEffect(() => {
+    const perspective = camera as PerspectiveCamera;
+    perspective.fov = 45;
+    perspective.near = 0.2;
+    perspective.far = 175;
+    perspective.zoom = 1;
+    perspective.updateProjectionMatrix();
+  }, [camera]);
 
   // --- decode geometry (Suspense) ---
   const bonesGeometry = useDrcGeometry("avatar/avatar-bones.drc");
@@ -262,6 +282,8 @@ export default function Avatar({
     const bodyMaterial = makeFaceMaterial(eyeTex, atlasTex);
     const body = new SkinnedMesh(bodyGeometry, bodyMaterial);
     body.frustumCulled = false;
+    body.castShadow = true;
+    body.receiveShadow = true;
     body.add(root); // bones live under the body skinned mesh
     body.bind(skeleton);
     body.normalizeSkinWeights();
@@ -297,18 +319,21 @@ export default function Avatar({
   ]);
 
   // hold the body material in a ref so the frame loop can drive its uniforms
-  const faceMatRef = useRef<MeshToonMaterial | null>(null);
+  const faceMatRef = useRef<MeshPhongMaterial | null>(null);
   useEffect(() => {
     faceMatRef.current = rig.bodyMaterial;
   }, [rig]);
 
 
   // --- runtime state ---
-  // Spawn direction (surface normal at the start point). Matches the original's
-  // characterInitialOptions.charPosition, normalised to a planet-surface dir so
-  // the avatar starts on open ground instead of the north pole (a tree).
+  // The reference values are exact world-space spawn points, not merely surface
+  // directions. Preserve their radial distance so the first ground query does
+  // not hit an unrelated roof or overhang farther out on the same ray.
   const initialUp = useMemo(
-    () => (initialDir ? initialDir.clone().normalize() : new Vector3(0, 1, 0)),
+    () =>
+      initialDir
+        ? initialDir.clone().sub(center).normalize()
+        : new Vector3(0, 1, 0),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     []
   );
@@ -326,7 +351,7 @@ export default function Avatar({
   const footOffset = useRef(0);
   const vertVel = useRef(0);
   const onGround = useRef(true);
-  const groundPlaced = useRef(false);
+  const groundPlaced = useRef(Boolean(initialDir));
   const current = useRef<AnimName>("idle");
 
   // scratch
@@ -349,7 +374,7 @@ export default function Avatar({
   // small accumulator so the probe runs at ~30Hz, not once per frame.
   const groundCaster = useMemo(() => new Raycaster(), []);
   const rayAccum = useRef(0);
-  const surfaceDist = useRef(radius);
+  const surfaceDist = useRef(initialDir ? center.distanceTo(initialDir) : radius);
 
   // orbit camera state. camDist is the intended offset length (zoom distance);
   // we always re-normalise camOffset to it so the recenter lerp can't shrink it.
@@ -362,6 +387,7 @@ export default function Avatar({
   const zoomDelta = useRef(0);
   const dragging = useRef(false);
   const stepTimer = useRef(0);
+  const cameraPlaced = useRef(false);
 
   // pointer-drag rotate + wheel zoom on the canvas
   useEffect(() => {
@@ -467,8 +493,10 @@ export default function Avatar({
     camRight.copy(camForward).cross(u).normalize();
 
     const inWardrobe = wardrobeRef.current;
-    const driveZ = inWardrobe ? 0 : (i.forward ? 1 : 0) - (i.back ? 1 : 0);
-    const driveX = inWardrobe ? 0 : (i.right ? 1 : 0) - (i.left ? 1 : 0);
+    const inDialogue = dialogueRef.current;
+    const inputLocked = inWardrobe || inDialogue;
+    const driveZ = inputLocked ? 0 : (i.forward ? 1 : 0) - (i.back ? 1 : 0);
+    const driveX = inputLocked ? 0 : (i.right ? 1 : 0) - (i.left ? 1 : 0);
     const moving = driveZ !== 0 || driveX !== 0;
     const sprinting = i.sprint && moving;
     if (moving) {
@@ -487,7 +515,7 @@ export default function Avatar({
     f.addScaledVector(u, -f.dot(u)).normalize(); // keep forward tangent
 
     // jump / gravity along up
-    if (i.jump && onGround.current && !inWardrobe) {
+    if (i.jump && onGround.current && !inputLocked) {
       vertVel.current = JUMP_VELOCITY;
       onGround.current = false;
       void play("character/jump-start.ogg", 0.5);
@@ -536,6 +564,7 @@ export default function Avatar({
     // place + orient the avatar on the surface
     charPos.copy(center).addScaledVector(u, surfaceDist.current + footOffset.current);
     playerPosition.copy(charPos); // share with NPC proximity checks
+    playerUp.copy(u);
     if (outer.current) {
       outer.current.position.copy(charPos);
       // abeto avatar faces +Z; align its +Z with the travel direction so the
@@ -543,6 +572,7 @@ export default function Avatar({
       tmpRight.copy(u).cross(f).normalize();
       basis.makeBasis(tmpRight, u, f);
       outer.current.quaternion.setFromRotationMatrix(basis);
+      playerQuaternion.copy(outer.current.quaternion);
       outer.current.scale.setScalar(MODEL_SCALE);
     }
 
@@ -550,6 +580,9 @@ export default function Avatar({
     if (!onGround.current) setAction("air");
     else if (moving) setAction(sprinting ? "sprint" : "run");
     else setAction("idle");
+    if (outer.current) {
+      multiplayer.setLocalPose(charPos, outer.current.quaternion, current.current);
+    }
     rig.mixer.update(dt);
 
     // footsteps while moving on the ground
@@ -566,7 +599,14 @@ export default function Avatar({
     // camera: orbit follow normally, or swing to the avatar's front (full-body)
     // while in the wardrobe screen. Look target is resolved first so the camera
     // collision can cast from it toward the desired camera position.
-    if (inWardrobe) {
+    if (inDialogue) {
+      camTarget.copy(charPos).addScaledVector(u, DIALOGUE_LOOK);
+      desiredCamOffset
+        .copy(f)
+        .multiplyScalar(DIALOGUE_DIST)
+        .addScaledVector(u, DIALOGUE_HEIGHT);
+      camPos.copy(charPos).add(desiredCamOffset);
+    } else if (inWardrobe) {
       camTarget.copy(charPos).addScaledVector(u, WARDROBE_LOOK);
       desiredCamOffset
         .copy(f)
@@ -574,16 +614,28 @@ export default function Avatar({
         .addScaledVector(u, WARDROBE_HEIGHT);
       camPos.copy(charPos).add(desiredCamOffset);
     } else {
-      camTarget.copy(charPos).addScaledVector(u, LOOK_HEIGHT);
+      tmpRight.copy(u).cross(f).normalize();
+      camTarget
+        .copy(charPos)
+        .addScaledVector(u, LOOK_HEIGHT)
+        .addScaledVector(
+          tmpRight,
+          gl.domElement.clientWidth < gl.domElement.clientHeight ? -0.25 : CAM_TARGET_LATERAL
+        );
       camPos.copy(charPos).add(camOffset.current);
     }
+    playerCameraTarget.copy(camTarget);
 
     // camera collision: cast from the look target toward the desired camera
     // position; if a wall/terrain is nearer than that distance, pull the camera
     // in just short of it so it never clips through geometry.
     let camCollided = false;
     const camMesh = surface.current;
-    if (camMesh) {
+    // The authored portrait/customisation cameras intentionally ignore the
+    // gameplay collision hull. That hull contains low-detail overhangs which
+    // can otherwise pull a front-facing camera inside the avatar at either
+    // spawn point.
+    if (camMesh && !inDialogue && !inWardrobe) {
       camHitDir.copy(camPos).sub(camTarget);
       const wantDist = camHitDir.length();
       if (wantDist > 1e-3) {
@@ -602,10 +654,15 @@ export default function Avatar({
 
     // Snap in immediately when blocked (avoids a visible clip), but ease back out
     // smoothly when the obstruction clears.
-    if (camCollided) camera.position.copy(camPos);
-    else camera.position.lerp(camPos, Math.min(1, dt * (inWardrobe ? 4 : 10)));
-    camera.lookAt(camTarget);
+    if (!cameraPlaced.current || camCollided) {
+      camera.position.copy(camPos);
+      cameraPlaced.current = true;
+    } else {
+      const followRate = inWardrobe || inDialogue ? 4 : 0.75;
+      camera.position.lerp(camPos, 1 - Math.exp(-dt * followRate));
+    }
     camera.up.copy(u);
+    camera.lookAt(camTarget);
 
     // drive the blink/face sprite animation (imperative uniform update)
     const faceShader = faceMatRef.current?.userData.shader as
@@ -650,6 +707,9 @@ export default function Avatar({
           skeleton={rig.skeleton}
           parent={rig.group}
         />
+      </Suspense>
+      <Suspense fallback={null}>
+        <PlayerEmoji key={localEmoji?.nonce ?? "local-emoji-empty"} event={localEmoji} />
       </Suspense>
     </group>
   );

@@ -1,57 +1,74 @@
 "use client";
 
-import { useMemo } from "react";
-import { BackSide, ShaderMaterial } from "three";
+import { useEffect, useMemo, useRef } from "react";
+import { useFrame } from "@react-three/fiber";
+import { BackSide, Color, Mesh, RepeatWrapping, ShaderMaterial } from "three";
+import { useKtx2Texture } from "@/lib/messenger/r3f/hooks";
+import { playerPosition } from "@/lib/messenger/r3f/interaction";
 
-/**
- * Large inward-facing sky dome with a teal vertical gradient + value-noise
- * "watercolour" streaks, approximating the original's painted sky. Drawn first,
- * no depth write, and (being a ShaderMaterial) unaffected by scene fog.
- */
 const vertexShader = /* glsl */ `
-varying vec3 vDir;
+varying vec2 vSkyUv;
 void main() {
-  vDir = normalize(position);
+  vSkyUv = uv;
   gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
 }
 `;
 
+// The reference uses one authored cloud-noise texture twice: a very slow drift
+// multiplied by a stationary detail sample, then a hard painted-cloud cutoff.
 const fragmentShader = /* glsl */ `
-varying vec3 vDir;
-
-float hash(vec3 p) { return fract(sin(dot(p, vec3(12.989, 78.233, 45.164))) * 43758.5453); }
-float noise(vec3 p) {
-  vec3 i = floor(p), f = fract(p);
-  f = f * f * (3.0 - 2.0 * f);
-  return mix(
-    mix(mix(hash(i), hash(i + vec3(1,0,0)), f.x), mix(hash(i + vec3(0,1,0)), hash(i + vec3(1,1,0)), f.x), f.y),
-    mix(mix(hash(i + vec3(0,0,1)), hash(i + vec3(1,0,1)), f.x), mix(hash(i + vec3(0,1,1)), hash(i + vec3(1,1,1)), f.x), f.y),
-    f.z
-  );
-}
+uniform sampler2D uCloudNoise;
+uniform float uTime;
+uniform vec3 uColor1;
+uniform vec3 uColor2;
+uniform vec3 uColor3;
+varying vec2 vSkyUv;
 
 void main() {
-  float h = clamp(vDir.y * 0.5 + 0.5, 0.0, 1.0);
-  vec3 top = vec3(0.38, 0.70, 0.72);
-  vec3 horizon = vec3(0.64, 0.86, 0.80);
-  vec3 col = mix(horizon, top, smoothstep(0.0, 0.75, h));
-  // painted teal cloud blobs (hand-drawn look)
-  float cloud = noise(vDir * 3.5) * 0.6 + noise(vDir * 8.0) * 0.3 + noise(vDir * 18.0) * 0.1;
-  cloud = smoothstep(0.46, 0.66, cloud) * smoothstep(0.0, 0.25, h);
-  vec3 cloudCol = vec3(0.28, 0.62, 0.65);
-  col = mix(col, cloudCol, cloud * 0.62);
-  gl_FragColor = vec4(col, 1.0);
+  vec2 stretchedUv = vSkyUv * vec2(1.0, 2.0);
+  float drifting = texture2D(uCloudNoise, stretchedUv + vec2(uTime * 0.0005, 0.0)).r;
+  float detail = texture2D(uCloudNoise, stretchedUv * 1.83 + vec2(0.173, 0.417)).r;
+  float poleFade = smoothstep(0.035, 0.18, vSkyUv.y) * (1.0 - smoothstep(0.82, 0.965, vSkyUv.y));
+  float cloud = step(0.27, drifting * detail * poleFade);
+  vec3 cloudColor = mix(uColor3, uColor2, vSkyUv.y);
+  gl_FragColor = vec4(mix(uColor1, cloudColor, cloud), 1.0);
+  #include <colorspace_fragment>
 }
 `;
 
 export default function WatercolourSky() {
-  const material = useMemo(
-    () => new ShaderMaterial({ vertexShader, fragmentShader, side: BackSide, depthWrite: false }),
-    []
-  );
+  const mesh = useRef<Mesh>(null);
+  const cloudNoise = useKtx2Texture("clouds_noise_512.ktx2");
+  const material = useMemo(() => {
+    cloudNoise.wrapS = cloudNoise.wrapT = RepeatWrapping;
+    cloudNoise.needsUpdate = true;
+    return new ShaderMaterial({
+      vertexShader,
+      fragmentShader,
+      side: BackSide,
+      depthWrite: false,
+      uniforms: {
+        uCloudNoise: { value: cloudNoise },
+        uTime: { value: 0 },
+        uColor1: { value: new Color("#75bdc3") },
+        uColor2: { value: new Color("#9fe2e0") },
+        uColor3: { value: new Color("#b9ebea") },
+      },
+    });
+  }, [cloudNoise]);
+
+  useFrame((state) => {
+    material.uniforms.uTime.value = state.clock.elapsedTime;
+    // 0.9 parallax follow keeps the 55-unit dome centred around the walkable
+    // side of the small planet without making the clouds camera-locked.
+    mesh.current?.position.copy(playerPosition).multiplyScalar(0.9);
+  });
+
+  useEffect(() => () => material.dispose(), [material]);
+
   return (
-    <mesh material={material} renderOrder={-1} frustumCulled={false}>
-      <sphereGeometry args={[900, 32, 16]} />
+    <mesh ref={mesh} material={material} renderOrder={-100} frustumCulled={false}>
+      <sphereGeometry args={[55, 32, 32]} />
     </mesh>
   );
 }

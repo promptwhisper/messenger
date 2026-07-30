@@ -147,50 +147,210 @@
 
 /* Intro/landing uses the original's flat teal sky behind the planet. */
 .messenger-stage--intro {
-  background: #65c1bc;
+  background: #75bdc3;
 }
 
 .messenger-begin {
   position: fixed;
   left: 50%;
-  bottom: 56px;
+  bottom: 10.139vh;
   transform: translateX(-50%);
   z-index: 50;
-  padding: 14px 40px;
-  border: 3px solid #b9952f;
-  border-radius: 12px;
-  background: #f0d055;
+  display: grid;
+  place-items: center;
+  width: 18.611vh;
+  height: 7.083vh;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
   color: #f8f8f8;
   font-size: 16px;
   font-weight: 700;
   letter-spacing: 0.18em;
   cursor: pointer;
-  box-shadow: 0 5px 0 0 #b9952f;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  box-shadow: none;
   transition: transform 0.15s ease, background 0.15s ease;
+  animation: messenger-begin-in 3.25s 3.3s both;
 }
 .messenger-begin:hover {
   transform: translateX(-50%) scale(1.06);
-  background: #f4d970;
+  background: transparent;
 }
 .messenger-begin:active {
   transform: translateX(-50%) translateY(3px) scale(1.02);
-  box-shadow: 0 2px 0 0 #b9952f;
+  box-shadow: none;
+}
+
+@keyframes messenger-begin-in {
+  0% {
+    opacity: 0;
+    transform: translateX(-50%) scale(0) rotateX(-180deg);
+  }
+  45% {
+    opacity: 1;
+  }
+  72% {
+    transform: translateX(-50%) scale(1.08) rotateX(8deg);
+  }
+  100% {
+    opacity: 1;
+    transform: translateX(-50%) scale(1) rotateX(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .messenger-begin {
+    animation-duration: 1ms;
+    animation-delay: 0ms;
+  }
 }
 /* "BEGIN" baked from the original hand-drawn UglyDave font, painted with the
    button's text colour. */
 .messenger-begin__label {
   display: block;
-  width: 96px;
-  height: 30px;
-  background-color: currentColor;
-  filter: drop-shadow(1.5px 1.5px 0 #7a5e0d);
-  -webkit-mask-repeat: no-repeat;
-  mask-repeat: no-repeat;
-  -webkit-mask-position: center;
-  mask-position: center;
-  -webkit-mask-size: contain;
-  mask-size: contain;
+  width: 11.111vh;
+  height: 4.444vh;
+  overflow: hidden;
+  color: transparent;
+  background: #f8f8f8;
+  -webkit-mask: url("/images/icons/begin-reference.svg") center / contain no-repeat;
+  mask: url("/images/icons/begin-reference.svg") center / contain no-repeat;
+  filter: drop-shadow(2px 2px 0 #7a5e0d);
+}
+
+@media (max-width: 700px) and (orientation: portrait) {
+  .messenger-begin {
+    bottom: 11.42vh;
+    width: 22.333vh;
+    height: 8.5vh;
+  }
+  .messenger-begin__label {
+    width: 13.333vh;
+    height: 5.333vh;
+  }
+}
+
+/* Opening exchange in the present scene. The reference holds the camera on a
+   front-facing character portrait and uses three offset paper cards before the
+   movement HUD appears. Dimensions are expressed against the viewport so the
+   1280×720 composition and the narrow mobile composition scale together. */
+.messenger-dialogue {
+  position: fixed;
+  inset: 0;
+  z-index: 72;
+  color: #22262b;
+  font-family: "Comic Sans MS", "Bradley Hand", cursive;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+.messenger-dialogue__card,
+.messenger-dialogue__tag,
+.messenger-dialogue__continue {
+  border: 2.5px solid #4c5963;
+  border-radius: 1px;
+  box-shadow: 5px 6px 0 rgba(76, 89, 99, 0.72);
+}
+.messenger-dialogue__card {
+  position: absolute;
+  left: 22.5vw;
+  bottom: 12.2vh;
+  box-sizing: border-box;
+  width: 55.5vw;
+  min-height: 18.2vh;
+  display: flex;
+  align-items: center;
+  padding: 3.5vh 5.8vw 2.7vh;
+  background: #f8f8f8;
+  transform: rotate(-0.18deg);
+}
+.messenger-dialogue__card p {
+  margin: 0;
+  width: 110%;
+  flex: 0 0 110%;
+  font-size: clamp(17px, 1.64vw, 23px);
+  font-weight: 400;
+  line-height: 1.22;
+  letter-spacing: 0.045em;
+  scale: 0.91 1;
+  transform-origin: left center;
+  animation: messenger-dialogue-copy 180ms ease-out both;
+}
+.messenger-dialogue__tag {
+  position: absolute;
+  left: 20.7vw;
+  bottom: 29.2vh;
+  z-index: 1;
+  width: 17vw;
+  height: 10.2vh;
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  background: #66bde6;
+  color: #f8f8f8;
+  font-family: Impact, "Arial Black", sans-serif;
+  font-size: clamp(20px, 2.15vw, 31px);
+  letter-spacing: 0.035em;
+  text-shadow: 2px 2px 0 #29343b;
+  transform: rotate(-0.8deg);
+}
+.messenger-dialogue__continue {
+  position: absolute;
+  left: 73.7vw;
+  bottom: 7.1vh;
+  z-index: 2;
+  width: 5.45vw;
+  min-width: 58px;
+  aspect-ratio: 1 / 1;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  background: #f8f8f8;
+  cursor: pointer;
+  pointer-events: auto;
+  transform: rotate(-1.3deg);
+}
+.messenger-dialogue__continue span {
+  width: 0;
+  height: 0;
+  border-top: 19px solid transparent;
+  border-bottom: 19px solid transparent;
+  border-left: 27px solid #66bde6;
+  filter: drop-shadow(2px 1px 0 #4c5963);
+  transform: translateX(3px);
+}
+.messenger-dialogue__continue:hover {
+  transform: rotate(-1.3deg) scale(1.04);
+}
+.messenger-dialogue__continue:active {
+  transform: rotate(-1.3deg) translateY(3px);
+  box-shadow: 3px 3px 0 rgba(76, 89, 99, 0.72);
+}
+@keyframes messenger-dialogue-copy {
+  from { opacity: 0; transform: translateY(5px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (max-width: 700px) and (orientation: portrait) {
+  .messenger-dialogue__card {
+    left: 8vw;
+    bottom: 13vh;
+    width: 84vw;
+    min-height: 19vh;
+    padding: 4vh 10vw 3vh;
+  }
+  .messenger-dialogue__tag {
+    left: 7vw;
+    bottom: 30.5vh;
+    width: 40vw;
+    height: 8.5vh;
+  }
+  .messenger-dialogue__continue {
+    left: auto;
+    right: 5vw;
+    bottom: 8.5vh;
+    width: 14vw;
+  }
 }
 
 /* On-screen touch controls (joystick + jump) */
@@ -292,26 +452,26 @@
 /* Wardrobe / customization UI */
 .messenger-hud {
   position: fixed;
-  top: 20px;
-  right: 20px;
+  inset: 0;
   z-index: 60;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+  pointer-events: none;
 }
 /* Rounded-square (squircle) white buttons with a slate icon + soft drop
    shadow, matching the original sideButtons (uColor #F8F8F8, icon/shadow
    #647A87). */
 .messenger-hud__btn {
-  width: 54px;
-  height: 54px;
+  position: absolute;
+  right: 30px;
+  width: 65px;
+  height: 65px;
   border: none;
-  border-radius: 30%;
+  border-radius: 2px;
   background: #f7f6f2;
   color: #647a87;
   font-size: 22px;
   line-height: 1;
   cursor: pointer;
+  pointer-events: auto;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -325,33 +485,31 @@
   transform: scale(1.08);
 }
 .messenger-hud__btn--active {
-  background: #647a87;
-  color: #f7f6f2;
+  background: #f7f6f2;
+  color: #647a87;
 }
-.messenger-hud__btn--style {
-  position: relative;
+.messenger-hud__btn--quest {
+  top: 50px;
 }
-.messenger-hud__style-count {
-  position: absolute;
-  right: -4px;
-  bottom: -5px;
-  min-width: 20px;
-  height: 20px;
-  padding: 0 4px;
-  border: 2px solid #f7f6f2;
-  border-radius: 50%;
-  background: #d06f5f;
-  color: #fffaf2;
-  font: 700 11px/16px var(--font-sans);
-  text-align: center;
-  box-shadow: 2px 2px 0 rgba(75, 91, 100, 0.75);
+.messenger-hud__btn--sound {
+  bottom: 215px;
+}
+.messenger-hud__btn--wardrobe {
+  bottom: 132.5px;
+}
+.messenger-hud__btn--emoji {
+  bottom: 50px;
+}
+.messenger-hud__btn--emoji .messenger-hud__icon {
+  width: 36px;
+  height: 36px;
 }
 /* White Slug-baked PNG icons painted with the button's currentColor (so they
    invert on the active/dark state), sized to match the line-SVG icons. */
 .messenger-hud__icon {
   display: inline-block;
-  width: 26px;
-  height: 26px;
+  width: 31px;
+  height: 31px;
   background-color: currentColor;
   -webkit-mask-repeat: no-repeat;
   mask-repeat: no-repeat;
@@ -360,6 +518,161 @@
   -webkit-mask-size: contain;
   mask-size: contain;
   /* Icons stay flat — the 3D look comes from the button's offset shadow. */
+}
+
+/* Original multiplayer emoji list: a paper-card grid anchored to the bottom
+   right side button. The transparent backdrop keeps the HUD itself interactive
+   while allowing a click elsewhere to dismiss the list. */
+.emoji-panel__backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 59;
+  border: 0;
+  background: transparent;
+  cursor: default;
+}
+.emoji-panel {
+  position: fixed;
+  right: 115px;
+  bottom: 50px;
+  z-index: 61;
+  display: grid;
+  grid-template-columns: repeat(5, 44.4px);
+  grid-template-rows: repeat(2, 44.4px);
+  column-gap: 17px;
+  row-gap: 15px;
+  width: 320px;
+  height: 133.8px;
+  box-sizing: border-box;
+  padding: 15px;
+  border: 0;
+  border-radius: 2px;
+  background: #f8f8f8;
+  box-shadow: 5.5px 5.5px 0 #647a87;
+  transform-origin: right bottom;
+  animation: emoji-panel-show 150ms ease-out both;
+}
+.emoji-panel__item {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 44.4px;
+  height: 44.4px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #4c606b;
+  box-shadow: none;
+  cursor: pointer;
+  transition: transform 70ms ease, background 70ms ease;
+}
+.emoji-panel__item:hover,
+.emoji-panel__item:focus-visible {
+  background: transparent;
+  transform: scale(0.95);
+  outline: none;
+}
+.emoji-panel__item:active {
+  transform: scale(0.875);
+  box-shadow: none;
+}
+.emoji-panel__item > span {
+  font: 400 29px/1 "Apple Color Emoji", "Segoe UI Emoji", sans-serif;
+}
+.emoji-panel__item kbd {
+  display: none;
+}
+@keyframes emoji-panel-show {
+  from {
+    opacity: 0;
+    transform: scale(0.82) rotate(1deg);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) rotate(-0.25deg);
+  }
+}
+
+@media (min-width: 1400px) and (min-height: 800px) {
+  .messenger-hud__btn {
+    right: 60px;
+    width: 70px;
+    height: 70px;
+  }
+  .messenger-hud__btn--quest {
+    top: 60px;
+  }
+  .messenger-hud__btn--sound {
+    bottom: 250px;
+  }
+  .messenger-hud__btn--wardrobe {
+    bottom: 155px;
+  }
+  .messenger-hud__btn--emoji {
+    bottom: 60px;
+  }
+  .emoji-panel {
+    right: 150px;
+    bottom: 60px;
+    grid-template-columns: repeat(5, 48px);
+    grid-template-rows: repeat(2, 48px);
+    gap: 20px;
+    width: 360px;
+    height: 156px;
+    padding: 20px;
+  }
+  .emoji-panel__item {
+    width: 48px;
+    height: 48px;
+  }
+}
+
+@media (max-width: 700px) and (orientation: portrait) {
+  .messenger-hud__btn {
+    right: 20px;
+    width: 45px;
+    height: 45px;
+  }
+  .messenger-hud__btn--quest {
+    top: 40px;
+  }
+  .messenger-hud__btn--sound {
+    bottom: 165px;
+  }
+  .messenger-hud__btn--wardrobe {
+    bottom: 102.5px;
+  }
+  .messenger-hud__btn--emoji {
+    bottom: 40px;
+  }
+  .messenger-hud__icon {
+    width: 23px;
+    height: 23px;
+  }
+  .emoji-panel {
+    right: 80px;
+    bottom: 40px;
+    grid-template-columns: repeat(5, 40.8px);
+    grid-template-rows: repeat(2, 40.8px);
+    column-gap: 13px;
+    row-gap: 10px;
+    width: 280px;
+    height: 121.6px;
+    padding: 15px 12px;
+  }
+  .emoji-panel__item {
+    width: 40.8px;
+    height: 40.8px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .emoji-panel {
+    animation-duration: 1ms;
+  }
+  .emoji-panel__item {
+    transition-duration: 1ms;
+  }
 }
 
 .messenger-style-notice {
@@ -411,64 +724,90 @@
   position: fixed;
   inset: 0;
   z-index: 80;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(0, 0, 0, 0.45);
-  backdrop-filter: blur(4px);
+  background: transparent;
 }
 .messenger-info__card {
-  width: min(440px, 86vw);
-  padding: 28px 28px 24px;
-  border-radius: 18px;
-  background: #fff;
-  color: #1c1c1c;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
-  font-size: 14px;
-  line-height: 1.6;
+  position: absolute;
+  top: 48px;
+  right: 115px;
+  box-sizing: border-box;
+  width: 395px;
+  min-height: 405px;
+  padding: 32px 18px 24px;
+  border: 2.5px solid #4c5963;
+  border-radius: 1px;
+  background: #f8f8f8;
+  color: #4c606b;
+  box-shadow: 5.5px 5.5px 0 #647a87;
+  font-family: "Comic Sans MS", "Bradley Hand", cursive;
+  font-size: 20px;
+  line-height: 1.28;
+  transform: rotate(-0.35deg);
 }
 .messenger-info__title {
-  margin: 0 0 12px;
-  font-size: 22px;
-  font-weight: 800;
-  letter-spacing: 0.04em;
-}
-.messenger-info code {
-  padding: 1px 5px;
-  border-radius: 5px;
-  background: #f0f0f0;
-  font-size: 12px;
+  margin: 0;
+  color: #22262b;
+  font: 400 22px/1.1 "Comic Sans MS", "Bradley Hand", cursive;
+  letter-spacing: 0.045em;
 }
 .messenger-info__keys {
-  margin: 16px 0 20px;
-  padding-left: 18px;
+  margin: 24px 0 0;
+  padding: 0;
   display: grid;
-  gap: 6px;
+  gap: 15px;
+  list-style: none;
 }
-.messenger-info kbd {
-  display: inline-block;
-  min-width: 18px;
-  padding: 1px 7px;
-  border-radius: 6px;
-  border: 1px solid #d0d0d0;
-  border-bottom-width: 2px;
-  background: #fafafa;
-  font: 600 12px ui-monospace, monospace;
+.messenger-info__keys li {
+  display: grid;
+  grid-template-columns: 28px 1fr;
+  align-items: start;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #22262b;
+  letter-spacing: 0.02em;
+}
+.messenger-info__keys li > span {
+  margin: 0;
+  color: inherit;
+  font-size: inherit;
+  line-height: inherit;
+}
+.messenger-info__keys strong {
+  display: grid;
+  font-weight: 400;
 }
 .messenger-info__close {
-  width: 100%;
-  padding: 11px;
-  border: none;
-  border-radius: 999px;
-  background: #1c1c1c;
-  color: #fff;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  cursor: pointer;
-  transition: background 0.15s ease;
+  display: none;
 }
 .messenger-info__close:hover {
-  background: #000;
+  transform: scale(1.08);
+}
+
+@media (max-width: 700px) and (orientation: portrait) {
+  .messenger-info__card {
+    top: 40px;
+    right: 80px;
+    width: min(280px, calc(100vw - 100px));
+    min-height: 350px;
+    padding: 28px 22px 22px;
+  }
+  .messenger-info__title {
+    font-size: 26px;
+  }
+  .messenger-info__keys {
+    gap: 12px;
+  }
+  .messenger-info__keys li {
+    min-height: 44px;
+    padding: 0 11px;
+    font-size: 12px;
+  }
+  .messenger-info__hint {
+    line-height: 1.8;
+  }
 }
 
 /* Wardrobe overlay: paired arrows flanking the full-body character + a top
@@ -489,28 +828,33 @@
   border: none;
   cursor: pointer;
   background: #fbfaf6;
-  border-radius: 14px;
-  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.22);
+  border: 2px solid #4c5963;
+  border-radius: 2px;
+  box-shadow: 5px 6px 0 rgba(100, 122, 135, 0.72);
   transition: transform 0.08s ease, background 0.12s ease;
 }
 .wardrobe-ov__close {
   position: absolute;
-  top: 7%;
-  left: 50%;
+  top: 14.5%;
+  left: 50.8%;
   transform: translateX(-50%);
-  width: 56px;
-  height: 56px;
+  width: 62px;
+  height: 62px;
   color: #c0392b;
+}
+.wardrobe-ov__close .messenger-hud__icon {
+  width: 38px;
+  height: 38px;
 }
 .wardrobe-ov__close:hover {
   transform: translateX(-50%) scale(1.06);
 }
 .wardrobe-ov__rows {
   position: absolute;
-  top: 50%;
-  left: 50%;
+  top: 59.2%;
+  left: 50.8%;
   transform: translate(-50%, -50%);
-  width: min(470px, 86vw);
+  width: min(307px, 76vw);
   display: flex;
   flex-direction: column;
   gap: 58px;
@@ -520,9 +864,9 @@
   justify-content: space-between;
 }
 .wardrobe-ov__arrow {
-  width: 52px;
-  height: 52px;
-  color: #3a3531;
+  width: 56px;
+  height: 56px;
+  color: #647a87;
 }
 .wardrobe-ov__arrow:hover {
   background: #fff;
